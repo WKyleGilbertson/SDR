@@ -56,7 +56,7 @@ sdr: setup $(SDR_OBJS)
 	$(CC) $(SDR_OBJS) $(LDFLAGS) ws2_32.lib /OUT:$(BDIR)/sdr.exe
 
 collector: setup $(ODIR)/collector.obj
-	$(CC) $(ODIR)/collector.obj $(LDFLAGS) $(LDIR)/FTD2XX.lib \
+	$(CC) $(ODIR)/collector.obj $(LDFLAGS) ws2_32.lib $(LDIR)/FTD2XX.lib \
 	/OUT:$(BDIR)/collector.exe
 
 relay_server: setup $(ODIR)/relay_server.obj

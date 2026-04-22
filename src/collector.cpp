@@ -8,9 +8,6 @@
 #include "version.h"
 #include "ftd2xx.h"
 
-#pragma comment(lib, "ws2_32.lib")
-#pragma comment(lib, "lib/FTD2XX.lib")
-
 #define CHUNK_SIZE 1024
 #define PAYLOAD_SIZE 1023
 #define FIFO_SIZE 65536 
