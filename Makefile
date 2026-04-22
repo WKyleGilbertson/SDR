@@ -9,7 +9,7 @@ BDIR = ./bin
 
 # -- Compiler and flags --
 CC = CL
-CFLAGS = /O2 /EHsc /I$(IDIR) /MP 
+CFLAGS = /O2 /EHsc /I$(IDIR) /MP  /Dkiss_fft_scalar=float 
 LDFLAGS = /link
 
 # -- Metadata --
@@ -37,8 +37,13 @@ MACROS = /DMAJOR_VERSION=$(MAJOR) /DMINOR_VERSION=$(MINOR) \
 	/DPATCH_VERSION=$(PATCH) /DAPP_NAME=$(APP_NAME) \
 	/DCURRENT_HASH=$(CURRENT_HASH) /DCURRENT_DATE=$(CURRENT_DATE)
 
-SDR_OBJS = $(ODIR)/sdr.obj $(ODIR)/ElasticReceiver.obj \
-	$(ODIR)/ChannelProcessor.obj $(ODIR)/NCO.obj
+SDR_OBJS = $(ODIR)/sdr.obj \
+           $(ODIR)/ElasticReceiver.obj \
+           $(ODIR)/NCO.obj \
+           $(ODIR)/ChannelProcessor.obj \
+           $(ODIR)/g2init.obj \
+           $(ODIR)/PCSEngine.obj \
+           $(ODIR)/kiss_fft.obj
 
 # -- Targets --
 all: setup sdr collector relay_server
@@ -49,6 +54,10 @@ setup:
 
 # Pattern rule: ALL .cpp to .obj
 $(ODIR)/%.obj: $(SDIR)/%.cpp
+	$(CC) $(CFLAGS) $(MACROS) /c $< /Fo$@
+
+# Rule for the C file (kiss_fft.c)
+$(ODIR)/kiss_fft.obj: $(SDIR)/kiss_fft.c
 	$(CC) $(CFLAGS) $(MACROS) /c $< /Fo$@
 
 # Build rules for each target
