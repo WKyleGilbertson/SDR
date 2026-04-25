@@ -26,14 +26,13 @@ public:
 
 private:
     void ingest_thread();
-    
     std::vector<uint8_t> _ring;
     size_t _w_ptr;
     size_t _r_ptr;
     std::mutex _mtx;
     SOCKET _s;
     bool _is_running;
-
     uint32_t _last_unix_time = 0; // Tracks the roll
-    bool _aligned = false;        // Move this to class scope so we can reset it
+    bool _aligned = false;
+    sockaddr_in _relay_addr{};
 };
