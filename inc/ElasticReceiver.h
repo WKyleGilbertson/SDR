@@ -33,4 +33,7 @@ private:
     std::mutex _mtx;
     SOCKET _s;
     bool _is_running;
+
+    uint32_t _last_unix_time = 0; // Tracks the roll
+    bool _aligned = false;        // Move this to class scope so we can reset it
 };

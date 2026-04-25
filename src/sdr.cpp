@@ -35,7 +35,7 @@ int main()
             return -1;
 
         PCSEngine pcs(16368000.0);
-        //const size_t samples_per_ms = 16368; // 16.368 MHz / 1000
+        // const size_t samples_per_ms = 16368; // 16.368 MHz / 1000
         const size_t samples_per_ms = 8184; // 16.368 MHz / 1000
         bool acq_needed = true;
 
@@ -72,44 +72,47 @@ int main()
                 }
                 // --- NEW: Acquisition Logic ---
 
- if (acq_needed) {
-    const size_t SAMPLES_PER_MS = 16368;
-    const size_t FFT_SIZE = 16384; 
-    const int NUM_MS = 5;
-    
-    // 1. Prepare the buffer: size MUST be a multiple of 16384 (81920 total)
-    // This replicates: std::vector<kiss_fft_cpx> data(16384 * config.numMs);
-    std::vector<kiss_fft_cpx> aligned_data(FFT_SIZE * NUM_MS, {0, 0});
-    uint8_t* raw_ptr = block.data();
+                if (acq_needed)
+                {
+                    const size_t SAMPLES_PER_MS = 16368;
+                    const size_t FFT_SIZE = 16384;
+                    const int NUM_MS = 5;
 
-    std::cout << "\n[*] Unpacking 5ms (MAX2769 Split-Nibble) with Alignment..." << std::endl;
+                    // 1. Prepare the buffer: size MUST be a multiple of 16384 (81920 total)
+                    // This replicates: std::vector<kiss_fft_cpx> data(16384 * config.numMs);
+                    std::vector<kiss_fft_cpx> aligned_data(FFT_SIZE * NUM_MS, {0, 0});
+                    uint8_t *raw_ptr = block.data();
 
-    // 2. Unpack with 16-sample padding per ms
-    for (int ms = 0; ms < NUM_MS; ms++) {
-        uint8_t* ms_source = raw_ptr + (ms * 8184); // 8184 bytes per ms
-        kiss_fft_cpx* ms_dest = &aligned_data[ms * FFT_SIZE];
+                    std::cout << "\n[*] Unpacking 5ms (MAX2769 Split-Nibble) with Alignment..." << std::endl;
 
-        for (size_t i = 0; i < 8184; ++i) {
-            unpackL1IF(ms_source[i], ms_dest[2*i], ms_dest[2*i+1]);
-        }
-        // Zero-padding (samples 16368-16383) is already there from vector init
-    }
+                    // 2. Unpack with 16-sample padding per ms
+                    for (int ms = 0; ms < NUM_MS; ms++)
+                    {
+                        uint8_t *ms_source = raw_ptr + (ms * 8184); // 8184 bytes per ms
+                        kiss_fft_cpx *ms_dest = &aligned_data[ms * FFT_SIZE];
 
-    // 3. Search using the PCSEngine logic from pcs.cpp
-    for (int prn = 1; prn <= 32; prn++) {
-        // The engine sees 81920 samples and knows to integrate 5ms
-        AcqResult res = pcs.search(prn, aligned_data, 4.092e6f, 20, 500.0f);
+                        for (size_t i = 0; i < 8184; ++i)
+                        {
+                            unpackL1IF(ms_source[i], ms_dest[2 * i], ms_dest[2 * i + 1]);
+                        }
+                        // Zero-padding (samples 16368-16383) is already there from vector init
+                    }
 
-        if (res.snr > 8.0) {
-            // Note: res.bin is an int based on your compiler warning
-            printf("LOCKED | PRN %2d | SNR %5.1f | Bin %3d | Peak %d\n", 
-                   prn, res.snr, res.bin, (int)res.peakIndex);
-        }
-    }
-    acq_needed = false;
-}               
+                    // 3. Search using the PCSEngine logic from pcs.cpp
+                    for (int prn = 1; prn <= 32; prn++)
+                    {
+                        // The engine sees 81920 samples and knows to integrate 5ms
+                        AcqResult res = pcs.search(prn, aligned_data, 4.092e6f, 20, 500.0f);
 
-                // --- END NEW LOGIC ---
+                        if (res.snr > 8.0)
+                        {
+                            // Note: res.bin is an int based on your compiler warning
+                            printf("LOCKED | PRN %2d | SNR %5.1f | Bin %3d | Peak %d\n",
+                                   prn, res.snr, res.bin, (int)res.peakIndex);
+                        }
+                    }
+                    acq_needed = false;
+                }
 
                 // Process the 10ms block (using 0.0 Hz for blind energy detection)
                 CorrRes res = chan.process(block.data(), block_size, 0.0);
