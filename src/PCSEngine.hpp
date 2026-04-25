@@ -20,27 +20,39 @@ struct AcqResult
     double snr;
 };
 /**
- * unpackL1IF: MAX2769 Split-Nibble Unpacker
- * Based on the established Constitutional Law of raw2bin.cpp
- * 1 Byte = 2 Complex Samples (I0, Q0, I1, Q1)
- */
+L1IFStream Card: FNLN Mapping
+       =========================================================
+       Format: 2-bit Sign-Magnitude, 2 complex samples per byte
+       Basackwards Logic: Sample 0 (Older) is in bits 7-4
+                          Sample 1 (Newer) is in bits 3-0
+
+       One Byte (8 bits) Layout:
+       ---------------------------------------------------------
+       | Bit 7 | Bit 6 | Bit 5 | Bit 4 | Bit 3 | Bit 2 | Bit 1 | Bit 0 |
+       |-------|-------|-------|-------|-------|-------|-------|-------|
+       |  Q0_s |  Q0_m |  I0_s |  I0_m |  Q1_s |  Q1_m |  I1_s |  I1_m |
+       ---------------------------------------------------------
+       |   Sample 0 (First in Time)    |   Sample 1 (Second in Time)   | */
 inline void unpackL1IF(uint8_t b, kiss_fft_cpx& c0, kiss_fft_cpx& c1) {
-    // MAX2769 Sign-Magnitude mapping:
-    // Sign 0 -> Positive, Sign 1 -> Negative
-    // Mag  0 -> 1, Mag 1 -> 3
     auto map = [](uint8_t m, uint8_t s) -> int16_t {
+        // Mapping: Sign 0 -> Pos, Sign 1 -> Neg
+        // Mapping: Mag 0 -> 1, Mag 1 -> 3
         int16_t val = (s == 0) ? 1 : -1;
         if (m != 0) val *= 3;
-        return val << 3; // Shifted for fixed-point FFT headroom
+        return val << 3; // Shifted for fixed-point headroom
     };
 
-    // Low Nibble: Magnitudes (0-3) | High Nibble: Signs (4-7)
-    c0.r = map((b >> 0) & 1, (b >> 4) & 1); // I0
-    c0.i = map((b >> 1) & 1, (b >> 5) & 1); // Q0
+    // SAMPLE 0: The "First Nibble" (High bits 7-4)
+    // I0: Mag=Bit 4, Sign=Bit 5 | Q0: Mag=Bit 6, Sign=Bit 7
+    c0.r = map((b >> 4) & 1, (b >> 5) & 1); 
+    c0.i = map((b >> 6) & 1, (b >> 7) & 1); 
     
-    c1.r = map((b >> 2) & 1, (b >> 6) & 1); // I1
-    c1.i = map((b >> 3) & 1, (b >> 7) & 1); // Q1
+    // SAMPLE 1: The "Low Nibble" (Low bits 3-0)
+    // I1: Mag=Bit 0, Sign=Bit 1 | Q1: Mag=Bit 2, Sign=Bit 3
+    c1.r = map((b >> 0) & 1, (b >> 1) & 1); 
+    c1.i = map((b >> 2) & 1, (b >> 3) & 1); 
 }
+
 class PCSEngine
 {
 private:

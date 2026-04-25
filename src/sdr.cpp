@@ -102,7 +102,7 @@ int main()
 
         if (res.snr > 8.0) {
             // Note: res.bin is an int based on your compiler warning
-            printf("LOCKED | PRN %2d | SNR %5.1f | Bin %d | Peak %d\n", 
+            printf("LOCKED | PRN %2d | SNR %5.1f | Bin %3d | Peak %d\n", 
                    prn, res.snr, res.bin, (int)res.peakIndex);
         }
     }
