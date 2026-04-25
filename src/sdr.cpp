@@ -107,8 +107,23 @@ int main()
                         if (res.snr > 8.0)
                         {
                             // Note: res.bin is an int based on your compiler warning
-                            printf("LOCKED | PRN %2d | SNR %5.1f | Bin %3d | Peak %d\n",
+                            printf("LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Peak %d\n",
                                    prn, res.snr, res.bin, (int)res.peakIndex);
+                        }
+                    }
+                    // Define the WAAS PRNs we want to hunt
+                    std::vector<int> waas_prns = {131, 133, 135};
+
+                    for (int prn : waas_prns)
+                    {
+                        // We use a slightly wider Doppler bin or smaller step if needed,
+                        // but 500Hz steps are usually fine for acquisition.
+                        AcqResult w_res = pcs.search(prn, aligned_data, 4.092e6f, 20, 500.0f);
+
+                        if (w_res.snr > 8.0f)
+                        { // WAAS usually has a decent signal
+                            printf("LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Peak %u\n",
+                                   prn, w_res.snr, w_res.bin, (int)w_res.peakIndex);
                         }
                     }
                     acq_needed = false;
