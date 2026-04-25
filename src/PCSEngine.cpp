@@ -4,8 +4,10 @@
 #include "PCSEngine.hpp"
 #include "G2INIT.h"
 
-extern "C" {
-    void KISS_FFT_ERROR(const char *msg) {
+extern "C"
+{
+    void KISS_FFT_ERROR(const char *msg)
+    {
         std::cerr << "KissFFT Error: " << msg << std::endl;
     }
 }
@@ -13,46 +15,65 @@ extern "C" {
 PCSEngine::PCSEngine(double sampleFreq)
     : m_sampleFreq(sampleFreq),
       m_nco(10, (float)sampleFreq),
-      m_workspace(16384),
-      m_accumulatedMag(16384),
-      m_codeFftCurrent(16384)
+      m_workspace(N),
+      m_accumulatedMag(N),
+      m_codeFftCurrent(N),
+      m_ncoBuffer(N) // Initialize m_ncoBuffer to size N (16384)
 {
     m_cfg_fwd = kiss_fft_alloc(16384, 0, NULL, NULL);
     m_cfg_inv = kiss_fft_alloc(16384, 1, NULL, NULL);
 }
 
-PCSEngine::~PCSEngine() {
+PCSEngine::~PCSEngine()
+{
     free(m_cfg_fwd);
     free(m_cfg_inv);
 }
 
-void PCSEngine::initPrn(int prn) {
+void PCSEngine::initPrn(int prn)
+{
     if (codeFfts.find(prn) != codeFfts.end())
         return;
 
     G2INIT sv(prn, 0);
-    for (size_t idx = 0; idx < N; idx++) {
-        int chipIdx = (idx / 16) % 1023;
-        m_codeFftCurrent[idx].r = (float)sv.CODE[chipIdx];
-        m_codeFftCurrent[idx].i = 0.0f;
+
+    // 1. Fill 1ms exactly (16368 samples)
+    for (size_t idx = 0; idx < 16368; idx++)
+    {
+        //m_codeFftCurrent[idx].r = (int16_t)sv.CODE[idx / 16] * 16384;
+        m_codeFftCurrent[idx].r = (int16_t)sv.CODE[idx / 16] * 1024;
+        m_codeFftCurrent[idx].i = 0;
     }
 
+    // 2. ZERO-PAD the remaining 16 samples to reach N=16384
+    // This prevents the "Franken-chip" interference
+    for (size_t idx = 16368; idx < N; idx++)
+    {
+        m_codeFftCurrent[idx].r = 0;
+        m_codeFftCurrent[idx].i = 0;
+    }
+
+    // 3. Perform Forward FFT
     kiss_fft(m_cfg_fwd, m_codeFftCurrent.data(), m_codeFftCurrent.data());
 
-    for (size_t idx = 0; idx < N; idx++) {
-        m_codeFftCurrent[idx].i = -m_codeFftCurrent[idx].i; // Conjugate
+    // 4. Conjugate (flipped Imaginary)
+    for (size_t idx = 0; idx < N; idx++)
+    {
+        // m_codeFftCurrent[idx].i *= -1.0f;
+        m_codeFftCurrent[idx].i = -m_codeFftCurrent[idx].i;
     }
 
+    // 5. Store the clean, padded, frequency-domain replica
     codeFfts[prn] = m_codeFftCurrent;
 }
 
-// Ensure the signature matches the .hpp exactly
 AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
                             float centerFreq, int binRange, float binWidth)
 {
     AcqResult bestResult = {0, 0, -99.0f, -99.0f};
     int numBlocks = (int)(rawData.size() / N);
-    if (numBlocks == 0) return bestResult;
+    if (numBlocks == 0)
+        return bestResult;
 
     initPrn(prn);
     const std::vector<kiss_fft_cpx> &currentCodeFft = codeFfts[prn];
@@ -62,45 +83,45 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
         std::fill(m_accumulatedMag.begin(), m_accumulatedMag.end(), 0.0f);
 
         m_nco.SetFrequency(centerFreq + (bin * binWidth));
-        m_nco.m_phase = 0;
+
+        for (size_t idx = 0; idx < 16368; idx++)
+        {
+            uint32_t ncoIdx = m_nco.clk();
+            // Multiply float sin/cos by 32767 and cast to int16
+            m_ncoBuffer[idx].r = static_cast<int16_t>(m_nco.cosine(ncoIdx) * 1024.0f);
+            m_ncoBuffer[idx].i = static_cast<int16_t>(m_nco.sine(ncoIdx) * 1024.0f);
+        }
+
+        // Zero out the padding using the struct members
+        for (size_t idx = 16368; idx < N; idx++)
+        {
+            m_ncoBuffer[idx].r = 0;
+            m_ncoBuffer[idx].i = 0;
+        }
 
         for (int b = 0; b < numBlocks; b++)
         {
-            // Now rawData is already kiss_fft_cpx, so no complex conversion needed
             const kiss_fft_cpx *blockStart = &rawData[b * N];
 
-            for (size_t idx = 0; idx < N; idx++)
-            {
-                uint32_t ncoIdx = m_nco.clk();
-                float c = (float)m_nco.cosine(ncoIdx);
-                float s = (float)m_nco.sine(ncoIdx);
+            // Stage 1: Mix with local NCO to baseband
+            complex_mix(m_workspace.data(), blockStart,
+                         m_ncoBuffer.data(), N, 2);
+            // complex_mix_bridge(m_workspace.data(), blockStart, CpxncoBuff.data(), N);
 
-                float re = blockStart[idx].r;
-                float im = blockStart[idx].i;
-
-                m_workspace[idx].r = re * c - im * s;
-                m_workspace[idx].i = re * s + im * c;
-            }
-
+            // Stage 2: Forward FFT of the mixed signal
             kiss_fft(m_cfg_fwd, m_workspace.data(), m_workspace.data());
 
-            for (size_t idx = 0; idx < N; idx++)
-            {
-                float a = m_workspace[idx].r;
-                float b = m_workspace[idx].i;
-                float c = currentCodeFft[idx].r;
-                float d = currentCodeFft[idx].i;
+            // Stage 3: Frequency-domain correlation
+            complex_mix(m_workspace.data(), m_workspace.data(),
+                        currentCodeFft.data(), N, 0);
 
-                m_workspace[idx].r = a * c - b * d;
-                m_workspace[idx].i = a * d + b * c;
-            }
-
+            // Stage 4: Inverse FFT to get correlation magnitudes
             kiss_fft(m_cfg_inv, m_workspace.data(), m_workspace.data());
 
             for (size_t idx = 0; idx < N; idx++)
             {
-                float r = m_workspace[idx].r;
-                float i = m_workspace[idx].i;
+                float r = (float)m_workspace[idx].r;
+                float i = (float)m_workspace[idx].i;
                 m_accumulatedMag[idx] += std::sqrtf(r * r + i * i);
             }
         }
@@ -108,7 +129,8 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
         float maxMag = 0.0f;
         int peakIndex = 0;
         float sumPower = 0.0f;
-        const float norm = 1.0f / (float)(N * numBlocks);
+        //const float norm = 1.0f / (float)(N * numBlocks);
+        const float norm = 1.0f / (float)(numBlocks);
 
         for (size_t idx = 0; idx < N; idx++)
         {
