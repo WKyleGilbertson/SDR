@@ -85,7 +85,7 @@ void ElasticReceiver::ingest_thread()
                     std::lock_guard<std::mutex> lock(_mtx);
 
                     // Get the phase (0-4091)
-                    uint32_t phase = hdr->sample_tick % 4092;
+                    uint32_t phase = hdr->sample_tick % 16368;
 
                     // Instead of shifting forward to the next MS,
                     // we set the pointer to the 'phase' itself.
@@ -93,6 +93,7 @@ void ElasticReceiver::ingest_thread()
                     _w_ptr = phase;
                     _r_ptr = 0;
                     _aligned = true;
+                    _last_sample_tick = hdr->sample_tick; // Update last sample tick
 
                     printf("\n[+] ZERO CROSS LOCKED: Unix %u | Tick %u | Phase %u\n",
                            hdr->unix_time, hdr->sample_tick, phase);

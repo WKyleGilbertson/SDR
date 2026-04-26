@@ -99,7 +99,8 @@ public:
     ~PCSEngine();
     void initPrn(int prn);
     AcqResult search(int prn, const std::vector<kiss_fft_cpx> &rawData,
-                     float centerFreq, int binRange, float binWidth);
+                     float centerFreq, int binRange, float binWidth,
+                    uint32_t sampleTick = 0);
 };
 
 #endif

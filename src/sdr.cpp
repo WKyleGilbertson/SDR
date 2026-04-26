@@ -77,6 +77,11 @@ int main()
                     const size_t SAMPLES_PER_MS = 16368;
                     const size_t FFT_SIZE = 16384;
                     const int NUM_MS = 5;
+                    uint32_t anchor = rx.getLastTick();
+                    //uint8_t eighth = (anchor % 16368) / 2046;
+                    uint32_t absSample = 0;
+                    uint16_t phase = anchor % 16368;
+                    float absoluteCodePhase = 0.0f;
 
                     // 1. Prepare the buffer: size MUST be a multiple of 16384 (81920 total)
                     // This replicates: std::vector<kiss_fft_cpx> data(16384 * config.numMs);
@@ -102,13 +107,22 @@ int main()
                     for (int prn = 1; prn <= 32; prn++)
                     {
                         // The engine sees 81920 samples and knows to integrate 5ms
-                        AcqResult res = pcs.search(prn, aligned_data, 4.092e6f, 20, 500.0f);
+                        AcqResult res = pcs.search(prn, aligned_data, 4.092e6f,
+                                                   20, 500.0f, anchor);
 
-                        if (res.snr > 8.0)
+                        if (res.snr > 9.0)
                         {
-                            // Note: res.bin is an int based on your compiler warning
-                            printf("LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f | Carrier %5.2f\n",
-                                   prn, res.snr, res.bin, (float)res.peakIndex/16, res.phase);
+                            absSample = (int)res.peakIndex - (int)phase;
+                            while(absSample < 0)
+                                absSample += 16368;
+                                absSample %= 16368; // Ensure wrap-around
+                            absoluteCodePhase = (float)absSample / 16.0f;
+                            while (absoluteCodePhase >= 1023.0f)
+                                absoluteCodePhase -= 1023.0f; // Wrap around if needed
+
+                            printf("LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f | Carrier %5.2f %6d\n",
+                                   //prn, res.snr, res.bin, (float)res.peakIndex / 16, res.phase, res.sampleTick % 16368);
+                                   prn, res.snr, res.bin, absoluteCodePhase, res.phase, res.sampleTick % 16368);
                         }
                     }
                     // Define the WAAS PRNs we want to hunt
@@ -118,12 +132,21 @@ int main()
                     {
                         // We use a slightly wider Doppler bin or smaller step if needed,
                         // but 500Hz steps are usually fine for acquisition.
-                        AcqResult w_res = pcs.search(prn, aligned_data, 4.092e6f, 20, 500.0f);
+                        AcqResult w_res = pcs.search(prn, aligned_data, 4.092e6f,
+                                                     20, 500.0f, anchor);
 
                         if (w_res.snr > 8.0f)
                         { // WAAS usually has a decent signal
-                            printf("LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f | Carrier %5.2f\n",
-                                   prn, w_res.snr, w_res.bin, (float)w_res.peakIndex/16, w_res.phase);
+                            absSample = (int)w_res.peakIndex - (int)phase;
+                            while(absSample < 0)
+                                absSample += 16368;
+                            absSample %= 16368; // Ensure wrap-around
+                            absoluteCodePhase = (float)absSample / 16.0f; // Convert to code phase (0-1023.0)
+                            if (absoluteCodePhase >= 1023.0f)
+                                absoluteCodePhase -= 1023.0f; // Wrap around if needed
+                            printf("LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f | Carrier %5.2f %6d\n",
+                                   //prn, w_res.snr, w_res.bin, (float)w_res.peakIndex / 16, w_res.phase, w_res.sampleTick % 16368);
+                                   prn, w_res.snr, w_res.bin, absoluteCodePhase, w_res.phase, w_res.sampleTick % 16368);
                         }
                     }
                     acq_needed = false;

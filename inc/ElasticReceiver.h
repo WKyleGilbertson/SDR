@@ -23,6 +23,7 @@ public:
 
     bool connect_to_relay(const char* ip, int port);
     bool get_samples(uint8_t* out, size_t count);
+    uint32_t getLastTick() const { return _last_sample_tick; }
 
 private:
     void ingest_thread();
@@ -35,4 +36,5 @@ private:
     uint32_t _last_unix_time = 0; // Tracks the roll
     bool _aligned = false;
     sockaddr_in _relay_addr{};
+    uint32_t _last_sample_tick = 0; // Tracks the last sample tick for alignment
 };
