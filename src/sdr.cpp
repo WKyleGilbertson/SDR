@@ -78,7 +78,6 @@ int main()
                     const size_t FFT_SIZE = 16384;
                     const int NUM_MS = 5;
                     uint32_t anchor = rx.getLastTick();
-                    //uint8_t eighth = (anchor % 16368) / 2046;
                     uint32_t absSample = 0;
                     uint16_t phase = anchor % 16368;
                     float absoluteCodePhase = 0.0f;
@@ -113,15 +112,15 @@ int main()
                         if (res.snr > 9.0)
                         {
                             absSample = (int)res.peakIndex - (int)phase;
-                            while(absSample < 0)
+                            while (absSample < 0)
                                 absSample += 16368;
-                                absSample %= 16368; // Ensure wrap-around
+                            absSample %= 16368; // Ensure wrap-around
                             absoluteCodePhase = (float)absSample / 16.0f;
                             while (absoluteCodePhase >= 1023.0f)
                                 absoluteCodePhase -= 1023.0f; // Wrap around if needed
 
                             printf("LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f | Carrier %5.2f %6d\n",
-                                   //prn, res.snr, res.bin, (float)res.peakIndex / 16, res.phase, res.sampleTick % 16368);
+                                   // prn, res.snr, res.bin, (float)res.peakIndex / 16, res.phase, res.sampleTick % 16368);
                                    prn, res.snr, res.bin, absoluteCodePhase, res.phase, res.sampleTick % 16368);
                         }
                     }
@@ -138,14 +137,14 @@ int main()
                         if (w_res.snr > 8.0f)
                         { // WAAS usually has a decent signal
                             absSample = (int)w_res.peakIndex - (int)phase;
-                            while(absSample < 0)
+                            while (absSample < 0)
                                 absSample += 16368;
-                            absSample %= 16368; // Ensure wrap-around
+                            absSample %= 16368;                           // Ensure wrap-around
                             absoluteCodePhase = (float)absSample / 16.0f; // Convert to code phase (0-1023.0)
                             if (absoluteCodePhase >= 1023.0f)
                                 absoluteCodePhase -= 1023.0f; // Wrap around if needed
                             printf("LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f | Carrier %5.2f %6d\n",
-                                   //prn, w_res.snr, w_res.bin, (float)w_res.peakIndex / 16, w_res.phase, w_res.sampleTick % 16368);
+                                   // prn, w_res.snr, w_res.bin, (float)w_res.peakIndex / 16, w_res.phase, w_res.sampleTick % 16368);
                                    prn, w_res.snr, w_res.bin, absoluteCodePhase, w_res.phase, w_res.sampleTick % 16368);
                         }
                     }

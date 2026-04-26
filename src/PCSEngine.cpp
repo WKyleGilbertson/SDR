@@ -67,7 +67,8 @@ void PCSEngine::initPrn(int prn)
 }
 
 AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
-                            float centerFreq, int binRange, float binWidth)
+                            float centerFreq, int binRange, float binWidth,
+                            uint32_t sampleTick)
 {
     AcqResult bestResult = {0, 0, -99.0f, -99.0f, 0.0f, 0};
     int numBlocks = (int)(rawData.size() / N);
@@ -156,7 +157,7 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
             //atan2 returns radians (-pi to pi)
             float phase = std::atan2f(peakI, peakR);
             // 2. Update bestResult assignment
-            bestResult = {bin, peakIndex, maxMag, snr, phase, 0};
+            bestResult = {bin, peakIndex, maxMag, snr, phase, sampleTick};
         }
     }
     return bestResult;
