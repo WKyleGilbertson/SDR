@@ -69,7 +69,7 @@ void PCSEngine::initPrn(int prn)
 AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
                             float centerFreq, int binRange, float binWidth)
 {
-    AcqResult bestResult = {0, 0, -99.0f, -99.0f};
+    AcqResult bestResult = {0, 0, -99.0f, -99.0f, 0.0f, 0};
     int numBlocks = (int)(rawData.size() / N);
     if (numBlocks == 0)
         return bestResult;
@@ -147,9 +147,16 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
         float snr = (avgNoisePower > 1e-12f) ? 10.0f * 
                 std::log10f(peakPower / avgNoisePower) : -99.0f;
 
+        // 1. After the peak search finishes finding peakIndex and bestResult
         if (snr > bestResult.snr)
         {
-            bestResult = {bin, peakIndex, maxMag, snr};
+            // Capture the phase of the very last block processed at the peak index
+            float peakR = (float)m_workspace[peakIndex].r;
+            float peakI = (float)m_workspace[peakIndex].i;
+            //atan2 returns radians (-pi to pi)
+            float phase = std::atan2f(peakI, peakR);
+            // 2. Update bestResult assignment
+            bestResult = {bin, peakIndex, maxMag, snr, phase, 0};
         }
     }
     return bestResult;

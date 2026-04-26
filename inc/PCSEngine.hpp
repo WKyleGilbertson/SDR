@@ -14,10 +14,12 @@
 
 struct AcqResult
 {
-    int bin;
-    int peakIndex;
-    double peakMagnitude;
-    double snr;
+    int bin;                // Doppler frequency bin index
+    int peakIndex;          // Sample index of the correlation peak
+    double peakMagnitude;   // Absolute power of the correlation peak
+    double snr;             // Signal-to-Noise Ratio in dB
+    float phase;            // Carrier Phase at the peak (in radians)
+    uint32_t sampleTick;     // Phase of incoming sample stream
 };
 
 /**
@@ -75,6 +77,8 @@ private:
 
     kiss_fft_cfg m_cfg_fwd;
     kiss_fft_cfg m_cfg_inv;
+
+    kiss_fft_cpx m_lastPeakComplex;
 
     std::map<int, std::vector<kiss_fft_cpx>> codeFfts;
 

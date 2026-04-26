@@ -107,8 +107,8 @@ int main()
                         if (res.snr > 8.0)
                         {
                             // Note: res.bin is an int based on your compiler warning
-                            printf("LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Peak %d\n",
-                                   prn, res.snr, res.bin, (int)res.peakIndex);
+                            printf("LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f | Carrier %5.2f\n",
+                                   prn, res.snr, res.bin, (float)res.peakIndex/16, res.phase);
                         }
                     }
                     // Define the WAAS PRNs we want to hunt
@@ -122,8 +122,8 @@ int main()
 
                         if (w_res.snr > 8.0f)
                         { // WAAS usually has a decent signal
-                            printf("LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Peak %u\n",
-                                   prn, w_res.snr, w_res.bin, (int)w_res.peakIndex);
+                            printf("LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f | Carrier %5.2f\n",
+                                   prn, w_res.snr, w_res.bin, (float)w_res.peakIndex/16, w_res.phase);
                         }
                     }
                     acq_needed = false;
