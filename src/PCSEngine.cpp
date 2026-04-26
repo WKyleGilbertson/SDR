@@ -40,7 +40,6 @@ void PCSEngine::initPrn(int prn)
     // 1. Fill 1ms exactly (16368 samples)
     for (size_t idx = 0; idx < 16368; idx++)
     {
-        //m_codeFftCurrent[idx].r = (int16_t)sv.CODE[idx / 16] * 16384;
         m_codeFftCurrent[idx].r = (int16_t)sv.CODE[idx / 16] * 1024;
         m_codeFftCurrent[idx].i = 0;
     }
@@ -106,7 +105,6 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
             // Stage 1: Mix with local NCO to baseband
             complex_mix(m_workspace.data(), blockStart,
                          m_ncoBuffer.data(), N, 2);
-            // complex_mix_bridge(m_workspace.data(), blockStart, CpxncoBuff.data(), N);
 
             // Stage 2: Forward FFT of the mixed signal
             kiss_fft(m_cfg_fwd, m_workspace.data(), m_workspace.data());
@@ -129,8 +127,7 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
         float maxMag = 0.0f;
         int peakIndex = 0;
         float sumPower = 0.0f;
-        //const float norm = 1.0f / (float)(N * numBlocks);
-        const float norm = 1.0f / (float)(numBlocks);
+        const float norm = 1.0f / (float)(N * numBlocks);
 
         for (size_t idx = 0; idx < N; idx++)
         {
@@ -147,7 +144,8 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
 
         float peakPower = maxMag * maxMag;
         float avgNoisePower = (sumPower - peakPower) / (float)(N - 1);
-        float snr = (avgNoisePower > 1e-12f) ? 10.0f * std::log10f(peakPower / avgNoisePower) : -99.0f;
+        float snr = (avgNoisePower > 1e-12f) ? 10.0f * 
+                std::log10f(peakPower / avgNoisePower) : -99.0f;
 
         if (snr > bestResult.snr)
         {
