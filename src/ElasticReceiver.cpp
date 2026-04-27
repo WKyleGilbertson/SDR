@@ -2,6 +2,8 @@
 #include <iostream>
 #include <thread>
 #include <vector>
+#include <ctime>
+#include <cstdio>
 #include <ws2tcpip.h>
 
 #pragma comment(lib, "ws2_32.lib")
@@ -78,29 +80,60 @@ void ElasticReceiver::ingest_thread()
             // Check for Unix second roll to align our ring buffer's start (0) to a 1-second epoch
             // Inside ingest_thread, replace the Unix Second Roll block:
 
+            /**/
             if (hdr->unix_time > _last_unix_time)
             {
                 if (!_aligned && _last_unix_time != 0)
                 {
                     std::lock_guard<std::mutex> lock(_mtx);
 
-                    // Get the phase (0-4091)
                     uint32_t phase = hdr->sample_tick % 16368;
+                    uint32_t ms_val = 0;
+                    ms_val = (int)((hdr->sample_tick % 16368000) / 16368);
 
-                    // Instead of shifting forward to the next MS,
-                    // we set the pointer to the 'phase' itself.
-                    // This means Sample 0 of the 1ms epoch was at ring index 0.
                     _w_ptr = phase;
                     _r_ptr = 0;
                     _aligned = true;
-                    _last_sample_tick = hdr->sample_tick; // Update last sample tick
+                    _last_sample_tick = hdr->sample_tick;
 
-                    printf("\n[+] ZERO CROSS LOCKED: Unix %u | Tick %u | Phase %u\n",
-                           hdr->unix_time, hdr->sample_tick, phase);
+                    struct tm gmt_info;
+                    __time64_t t_val = (__time64_t)hdr->unix_time;
+
+                    if (_gmtime64_s(&gmt_info, &t_val) == 0)
+                    {
+                        auto print2 = [](int v)
+                        {
+                            if (v < 10)
+                                std::cout << '0';
+                            std::cout << v;
+                        };
+
+                        std::cout << "\n[+] ZERO CROSS LOCKED: " << (gmt_info.tm_year + 1900) << "-";
+                        print2(gmt_info.tm_mon + 1);
+                        std::cout << "-";
+                        print2(gmt_info.tm_mday);
+                        std::cout << "T";
+                        print2(gmt_info.tm_hour);
+                        std::cout << ":";
+                        print2(gmt_info.tm_min);
+                        std::cout << ":";
+                        print2(gmt_info.tm_sec);
+                        std::cout << ".";
+
+                        if (ms_val < 100)
+                            std::cout << '0';
+                        if (ms_val < 10)
+                            std::cout << '0';
+                        std::cout << ms_val << "Z | Phase " << phase << std::endl;
+                    }
+                    else
+                    {
+                        std::cout << "\n[+] ZERO CROSS LOCKED: [Time Err] | Phase " << phase << std::endl;
+                    }
                 }
                 _last_unix_time = hdr->unix_time;
             }
-
+            /**/
             if (_aligned)
             {
                 size_t p_len = (size_t)(len - H_SIZE);
