@@ -9,10 +9,10 @@ BDIR = ./bin
 
 # -- Compiler and flags --
 CC = CL
-CFLAGS = /O2 /EHsc /I$(IDIR) /MP  /Dkiss_fft_scalar=int16_t /DFIXED_POINT=16
-#CFLAGS = /Zi /O2 /EHsc /I$(IDIR) /MP  /Dkiss_fft_scalar=int16_t /DFIXED_POINT=16
-#LDFLAGS = /link /DEBUG
-LDFLAGS = /link
+#CFLAGS = /O2 /EHsc /I$(IDIR) /MP  /Dkiss_fft_scalar=int16_t /DFIXED_POINT=16
+CFLAGS = /Zi /O2 /EHsc /I$(IDIR) /MP  /Dkiss_fft_scalar=int16_t /DFIXED_POINT=16
+LDFLAGS = /link /DEBUG
+#LDFLAGS = /link
 
 # -- Metadata --
 CURRENT_HASH := '"$(shell git rev-parse HEAD)"'

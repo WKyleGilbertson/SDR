@@ -76,6 +76,10 @@ void ElasticReceiver::ingest_thread()
         if (len >= H_SIZE)
         {
             RFE_Header_t *hdr = (RFE_Header_t *)tmp.data();
+            {
+                std::lock_guard<std::mutex> lock(_mtx_hdr);
+                _current_header = *hdr;
+            }
 
             // Check for Unix second roll to align our ring buffer's start (0) to a 1-second epoch
             // Inside ingest_thread, replace the Unix Second Roll block:

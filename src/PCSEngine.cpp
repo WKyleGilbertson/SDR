@@ -70,7 +70,17 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
                             float centerFreq, int binRange, float binWidth,
                             uint32_t sampleTick)
 {
-    AcqResult bestResult = {0, 0, -99.0f, -99.0f, 0.0f, 0};
+    //AcqResult bestResult = {prn, 0, 0, -99.0f, -99.0f, 0.0f, 0, sampleTick, 0.0f};
+    AcqResult bestResult {};
+    bestResult.prn = prn;
+    bestResult.bin = 0;
+    bestResult.peakIndex = 0;
+    bestResult.peakMagnitude = -99.0f;
+    bestResult.snr = -99.0f;
+    bestResult.phase = 0.0f;
+    bestResult.sampleTick = sampleTick;
+    bestResult.codePhase = 0.0f;
+
     int numBlocks = (int)(rawData.size() / N);
     if (numBlocks == 0)
         return bestResult;
@@ -157,7 +167,11 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
             //atan2 returns radians (-pi to pi)
             float phase = std::atan2f(peakI, peakR);
             // 2. Update bestResult assignment
-            bestResult = {bin, peakIndex, maxMag, snr, phase, sampleTick};
+            bestResult.bin = bin;
+            bestResult.peakIndex = peakIndex;
+            bestResult.peakMagnitude = maxMag;
+            bestResult.snr = snr;
+            bestResult.phase = phase;
         }
     }
     return bestResult;

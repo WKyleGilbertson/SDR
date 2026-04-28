@@ -24,6 +24,10 @@ public:
     bool connect_to_relay(const char* ip, int port);
     bool get_samples(uint8_t* out, size_t count);
     uint32_t getLastTick() const { return _last_sample_tick; }
+    RFE_Header_t get_latest_header() const { 
+        std::lock_guard<std::mutex> lock(_mtx_hdr);
+        return _current_header;
+    }
 
 private:
     void ingest_thread();
@@ -37,4 +41,6 @@ private:
     bool _aligned = false;
     sockaddr_in _relay_addr{};
     uint32_t _last_sample_tick = 0; // Tracks the last sample tick for alignment
+    RFE_Header_t _current_header{};
+    mutable std::mutex _mtx_hdr;
 };

@@ -11,6 +11,8 @@
 
 int main()
 {
+    RFE_Header_t meta = {};
+    std::vector<AcqResult> active_channels;
     SWV V;
     V.Major = MAJOR_VERSION;
     V.Minor = MINOR_VERSION;
@@ -34,13 +36,33 @@ int main()
         if (!rx.connect_to_relay("127.0.0.1", 12345))
             return -1;
 
-        PCSEngine pcs(16368000.0);
-        // const size_t samples_per_ms = 16368; // 16.368 MHz / 1000
-        const size_t samples_per_ms = 8184; // 16.368 MHz / 1000
+        // --- WAIT FOR FIRST PACKET ---
+        std::cout << "[*] Waiting for stream telemetry..." << std::endl;
+        int timeout = 0;
+        while (rx.get_latest_header().fs_rate == 0 && timeout < 500)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            timeout++;
+        }
+
+        if (timeout >= 500)
+        {
+            std::cerr << "[!] No data received from relay. Check if it's running." << std::endl;
+            return -1;
+        }
+
+        else
+        {
+            meta = rx.get_latest_header();
+            printf("[*] Connected to Device: %s | FS: %u Hz | Last Tick: %u\n",
+                   meta.dev_tag, meta.fs_rate, meta.sample_tick);
+        }
+        // -----------------------------
+
+        PCSEngine pcs((float)meta.fs_rate);
         bool acq_needed = true;
 
-        // Initialize ChannelProcessor (Assumes 16.368 MHz internally)
-        ChannelProcessor chan(16368000.0);
+        ChannelProcessor chan((float)meta.fs_rate);
 
         // 10ms of data (8184 bytes per ms * 10)
         // const size_t block_size = 8184 * 10;
@@ -74,16 +96,16 @@ int main()
 
                 if (acq_needed)
                 {
-                    const size_t SAMPLES_PER_MS = 16368;
-                    const size_t FFT_SIZE = 16384;
+                    const size_t SAMPLES_PER_MS = meta.fs_rate / 1000;  // 16386
+                    const size_t SAMPLES_PER_PKT = meta.payload_len * 2;// FNHN
+                    const size_t FFT_SIZE = 16384;   // 2^14, 16 more than 16386
                     const int NUM_MS = 5;
-                    uint32_t anchor = rx.getLastTick();
-                    uint16_t phase = anchor % 16368;
-                    uint8_t eighth = (anchor % 16368) / 2046;
-                    float absoluteCodePhase = 0.0f;
-                    float relativeCodePhase = 0.0f;
-                    const float phaseInterval = 1023.0 / 8;
-                    float offset = eighth * phaseInterval;
+                    uint32_t anchor = rx.getLastTick(); // Sample in the second
+                    uint8_t eighth = (anchor % SAMPLES_PER_MS) / SAMPLES_PER_PKT;
+                    float absoluteCodePhase = 0.0f;         // ms relative
+                    float relativeCodePhase = 0.0f;         // pkt relative
+                    const float phaseInterval = 1023.0 / 8; // 8 pkts per ms
+                    float offset = eighth * phaseInterval;  // pkt->ms offset
 
                     // 1. Prepare the buffer: size MUST be a multiple of 16384 (81920 total)
                     // This replicates: std::vector<kiss_fft_cpx> data(16384 * config.numMs);
@@ -114,14 +136,16 @@ int main()
 
                         if (res.snr > 9.0)
                         {
-                            relativeCodePhase = (float) ((res.peakIndex % 16368) / 16.0f);
+                            relativeCodePhase = (float)((res.peakIndex % 16368) / 16.0f);
                             absoluteCodePhase = relativeCodePhase - offset;
                             while (absoluteCodePhase < 0.0f)
                                 absoluteCodePhase += 1023.0f; // Wrap around if needed
+                            res.codePhase = absoluteCodePhase;
+                            active_channels.push_back(res);
 
                             printf("LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f | Carrier %5.2f %6d\n",
                                    // prn, res.snr, res.bin, (float)res.peakIndex / 16, res.phase, res.sampleTick % 16368);
-                                   prn, res.snr, res.bin, absoluteCodePhase, res.phase, res.sampleTick % 16368);
+                                   prn, res.snr, res.bin, res.codePhase, res.phase, res.sampleTick % 16368);
                         }
                     }
                     // Define the WAAS PRNs we want to hunt
@@ -136,13 +160,16 @@ int main()
 
                         if (w_res.snr > 8.0f)
                         { // WAAS usually has a decent signal
-                            relativeCodePhase = (float) ((w_res.peakIndex % 16368) / 16.0f);
+                            relativeCodePhase = (float)((w_res.peakIndex % 16368) / 16.0f);
                             absoluteCodePhase = relativeCodePhase - offset;
                             while (absoluteCodePhase < 0.0f)
                                 absoluteCodePhase += 1023.0f; // Wrap around if needed
+                            w_res.codePhase = absoluteCodePhase;
+                            active_channels.push_back(w_res);
+
                             printf("LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f | Carrier %5.2f %6d\n",
                                    // prn, w_res.snr, w_res.bin, (float)w_res.peakIndex / 16, w_res.phase, w_res.sampleTick % 16368);
-                                   prn, w_res.snr, w_res.bin, absoluteCodePhase, w_res.phase, w_res.sampleTick % 16368);
+                                   prn, w_res.snr, w_res.bin, w_res.codePhase, w_res.phase, w_res.sampleTick % 16368);
                         }
                     }
                     acq_needed = false;
@@ -179,7 +206,7 @@ int main()
                     lag_history.erase(lag_history.begin());
 
                 // Throttling: If we are processing faster than real-time, breathe
-                if (lag > 0.005)
+                if (lag > 0.005) // This said > 0.005 before, but that would only sleep if we were lagging behind, not if we were ahead.
                     std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
                 // UI Update every 200ms

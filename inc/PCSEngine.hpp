@@ -14,12 +14,14 @@
 
 struct AcqResult
 {
+    int prn;                // Satellite PRN number
     int bin;                // Doppler frequency bin index
     int peakIndex;          // Sample index of the correlation peak
     double peakMagnitude;   // Absolute power of the correlation peak
     double snr;             // Signal-to-Noise Ratio in dB
     float phase;            // Carrier Phase at the peak (in radians)
     uint32_t sampleTick;     // Phase of incoming sample stream
+    float codePhase;         // sub-ms code phase (0.0 - 1022.99)
 };
 
 /**
