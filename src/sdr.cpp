@@ -4,30 +4,18 @@
 #include <vector>
 #include <thread>
 #include <numeric>
-#include "version.h"
+#include "versionInfo.hpp"
 #include "ElasticReceiver.h"
 #include "ChannelProcessor.h"
 #include "PCSEngine.hpp"
 
 int main()
 {
+    versionInfo v;
+    v.printVersion();
     RFE_Header_t meta = {};
     std::vector<AcqResult> active_channels;
-    SWV V;
-    V.Major = MAJOR_VERSION;
-    V.Minor = MINOR_VERSION;
-    V.Patch = PATCH_VERSION;
-    sscanf(CURRENT_HASH, "%x", &V.GitTag);
-    strncpy(V.GitCI, CURRENT_HASH, 40);
-    V.GitCI[40] = '\0'; // Ensure null-termination
-    strncpy(V.BuildDate, CURRENT_DATE, sizeof(V.BuildDate) - 1);
-    V.BuildDate[sizeof(V.BuildDate) - 1] = '\0'; // Ensure null-termination
-    strncpy(V.Name, APP_NAME, sizeof(V.Name) - 1);
-    V.Name[sizeof(V.Name) - 1] = '\0'; // Ensure null-termination
-
-    fprintf(stdout, "%s GitCI:%s %s v%.1d.%.1d.%.1d\n",
-            V.Name, V.GitCI, V.BuildDate,
-            V.Major, V.Minor, V.Patch);
+    AcqResult target = {};
 
     try
     {
@@ -62,7 +50,9 @@ int main()
         PCSEngine pcs((float)meta.fs_rate);
         bool acq_needed = true;
 
-        ChannelProcessor chan((float)meta.fs_rate);
+        std::unique_ptr<ChannelProcessor> chan;
+        // std::make_unique<ChannelProcessor> chan;
+        printf(" [NEW CHAN PTR: %p] ", (void *)chan.get());
 
         // 10ms of data (8184 bytes per ms * 10)
         // const size_t block_size = 8184 * 10;
@@ -96,9 +86,11 @@ int main()
 
                 if (acq_needed)
                 {
-                    const size_t SAMPLES_PER_MS = meta.fs_rate / 1000;  // 16386
-                    const size_t SAMPLES_PER_PKT = meta.payload_len * 2;// FNHN
-                    const size_t FFT_SIZE = 16384;   // 2^14, 16 more than 16386
+                    //     std::make_unique<ChannelProcessor> chan;
+                    //     printf(" [NEW CHAN PTR: %p] ", (void*)chan.get());
+                    const size_t SAMPLES_PER_MS = meta.fs_rate / 1000;   // 16386
+                    const size_t SAMPLES_PER_PKT = meta.payload_len * 2; // FNHN
+                    const size_t FFT_SIZE = 16384;                       // 2^14, 16 more than 16386
                     const int NUM_MS = 5;
                     uint32_t anchor = rx.getLastTick(); // Sample in the second
                     uint8_t eighth = (anchor % SAMPLES_PER_MS) / SAMPLES_PER_PKT;
@@ -172,72 +164,114 @@ int main()
                                    prn, w_res.snr, w_res.bin, w_res.codePhase, w_res.phase, w_res.sampleTick % 16368);
                         }
                     }
-                    acq_needed = false;
-                }
+                    if (acq_needed && !active_channels.empty())
+                    {
+                        AcqResult selected_sat = active_channels[0]; // Fix: pick the first one
 
-                // Process the 10ms block (using 0.0 Hz for blind energy detection)
-                CorrRes res = chan.process(block.data(), block_size, 0.0);
+                        /*    bool found_131 = false;
 
-                // Update time tracking
-                total_data_time += 0.010;
-                session_time += 0.010;
+                            for (const auto &res : active_channels)
+                            {
+                                if (res.prn == 131)
+                                {
+                                    selected_sat = res;
+                                    found_131 = true;
+                                    break;
+                                }
+                            }
 
-                // Calculate current Magnitude and add to integrator
-                double current_mag = std::sqrt(res.i_val * res.i_val + res.q_val * res.q_val);
-                accumulated_mag += current_mag;
-                mag_count++;
+                            if (found_131)
+                            {
+                                printf("\n[*] High-Priority Lock: PRN 131 selected.\n");
+                            }
+                            else
+                            {
+                                printf("\n[*] PRN 131 not found. Tracking PRN %d.\n", selected_sat.prn);
+                            } */
 
-                // Latency Calculation
-                auto now = std::chrono::steady_clock::now();
-                double elapsed = std::chrono::duration<double>(now - start_wall).count();
-                double lag = total_data_time - elapsed;
-
-                // Self-Correcting Sync: Reset if drift > 100ms
-                if (std::abs(lag) > 0.100)
+                        // Re-initialize the processor with the locked satellite
+                        chan = std::make_unique<ChannelProcessor>((double)meta.fs_rate, selected_sat);
+                        printf("\n[*] HANDOVER SUCCESS: New Chan at %p tracking PRN %d\n",
+                               (void *)chan.get(), selected_sat.prn);
+                        acq_needed = false;
+                        continue; // Potentially optional....
+                    }
+                } // End of (acq_needed)
+                if (chan)
                 {
-                    start_wall = now;
-                    total_data_time = 0;
-                    lag = 0;
-                }
+                    // Process the 10ms block (using 0.0 Hz for blind energy detection)
+                    //printf(" [PTR: %p] ", (void *)chan.get());
+                    CorrRes res = chan->process(block.data(), block_size);
 
-                // Smooth out the lag display
-                lag_history.push_back(lag);
-                if (lag_history.size() > 20)
-                    lag_history.erase(lag_history.begin());
+                    // Update time tracking
+                    total_data_time += 0.010;
+                    session_time += 0.010;
 
-                // Throttling: If we are processing faster than real-time, breathe
-                if (lag > 0.005) // This said > 0.005 before, but that would only sleep if we were lagging behind, not if we were ahead.
-                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                    // Calculate current Magnitude and add to integrator
+                    double current_mag = std::sqrt(res.i_val * res.i_val + res.q_val * res.q_val);
+                    accumulated_mag += current_mag;
+                    mag_count++;
 
-                // UI Update every 200ms
-                if (std::chrono::duration<double>(now - last_display).count() >= 0.2)
-                {
-                    double avg_lag = std::accumulate(lag_history.begin(), lag_history.end(), 0.0) / lag_history.size();
+                    // Latency Calculation
+                    auto now = std::chrono::steady_clock::now();
+                    double elapsed = std::chrono::duration<double>(now - start_wall).count();
+                    double lag = total_data_time - elapsed;
 
-                    // Average the magnitude over the display window
-                    double display_mag = (mag_count > 0) ? (accumulated_mag / mag_count) : 0;
+                    // Self-Correcting Sync: Reset if drift > 100ms
+                    if (std::abs(lag) > 0.100)
+                    {
+                        start_wall = now;
+                        total_data_time = 0;
+                        lag = 0;
+                    }
 
-                    // Output with fixed formatting to prevent text jitter
-                    printf("\r[DSP] T+%7.2fs | Mag:%9.0f | Avg Lag:%+8.4fs",
-                           session_time, display_mag, avg_lag);
-                    fflush(stdout);
+                    // Smooth out the lag display
+                    lag_history.push_back(lag);
+                    if (lag_history.size() > 20)
+                        lag_history.erase(lag_history.begin());
 
-                    // Reset display counters
-                    last_display = now;
-                    accumulated_mag = 0;
-                    mag_count = 0;
-                }
-            }
+                    // Throttling: If we are processing faster than real-time, breathe
+                    if (lag > 0.005) // This said > 0.005 before, but that would only sleep if we were lagging behind, not if we were ahead.
+                        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+                    // UI Update every 200ms
+                    if (std::chrono::duration<double>(now - last_display).count() >= 0.2)
+                    {
+                        double avg_lag = std::accumulate(lag_history.begin(), lag_history.end(), 0.0) / lag_history.size();
+
+                        // Average the magnitude over the display window
+                        double display_mag = (mag_count > 0) ? (accumulated_mag / mag_count) : 0;
+                        // Pull live tracking data from the channel object
+                        // Assuming your ChannelProcessor has these getters:
+                        // double current_code = chan->getCodePhase();
+                        double current_code = res.current_code_phase;
+                        //double current_code = res.code_phase;
+                        double carrier_phase = atan2(res.q_val, res.i_val);
+                        // Enhanced Output
+                        printf("\r[TRK] PRN %3d | Carr: %+4.1f Hz | Code: %8.3f | Mag: %5.0f | Lag: %+7.4fs   ",
+                               // selected_sat.prn, 0.1, current_code, display_mag, avg_lag);
+                               chan->getPRN(), carrier_phase, current_code, display_mag, avg_lag);
+                        // Output with fixed formatting to prevent text jitter
+                        //                        printf("\r[DSP] T+%7.2fs | Mag:%9.0f | Avg Lag:%+8.4fs",
+                        //                               session_time, display_mag, avg_lag);
+                        fflush(stdout);
+
+                        // Reset display counters
+                        last_display = now;
+                        accumulated_mag = 0;
+                        mag_count = 0;
+                    } // end if (UI Update)
+                } // end if (chan)
+            } // end if (rx.get_samples)
             else
             {
-                // If the buffer is empty, don't spin the CPU at 100%
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
-        }
-    }
+        } // end while (true)
+    } // end try
     catch (...)
     {
         std::cerr << "\n[!] Error in SDR_test loop." << std::endl;
     }
     return 0;
-}
+} // end main

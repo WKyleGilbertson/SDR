@@ -22,7 +22,7 @@ CURRENT_DATE := '"$(shell date /t)"'
 sdr collector relay_server:
 sdr: MAJOR=0
 sdr: MINOR=1
-sdr: PATCH=1	
+sdr: PATCH=2	
 sdr: APP_NAME='"sdr"'
 
 collector: MAJOR=0
@@ -40,6 +40,7 @@ MACROS = /DMAJOR_VERSION=$(MAJOR) /DMINOR_VERSION=$(MINOR) \
 	/DCURRENT_HASH=$(CURRENT_HASH) /DCURRENT_DATE=$(CURRENT_DATE)
 
 SDR_OBJS = $(ODIR)/sdr.obj \
+           $(ODIR)/versionInfo.obj \
            $(ODIR)/ElasticReceiver.obj \
            $(ODIR)/NCO.obj \
            $(ODIR)/ChannelProcessor.obj \
