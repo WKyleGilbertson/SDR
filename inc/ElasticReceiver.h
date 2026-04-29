@@ -1,46 +1,52 @@
 #pragma once
 #include <vector>
 #include <mutex>
+#include <deque>
 #include <stdint.h>
 #include <winsock2.h>
+#include <ws2tcpip.h>
 
 #pragma pack(push, 1)
 struct RFE_Header_t {
     uint8_t pkt_type;
-    uint32_t fs_rate;     
+    uint32_t fs_rate;
     uint32_t unix_time;
     uint32_t sample_tick;
     uint32_t seq_num;
-    char dev_tag[16];     
-    uint16_t payload_len; 
+    char dev_tag[16];
+    uint16_t payload_len;
 };
 #pragma pack(pop)
 
+struct MillisecondBlock {
+    RFE_Header_t header;
+    std::vector<uint8_t> data; // 8184 bytes
+};
+
 class ElasticReceiver {
 public:
-    ElasticReceiver(size_t ring_size = 1024 * 1024 * 128);
+    ElasticReceiver(size_t max_blocks = 1000);
     ~ElasticReceiver();
 
     bool connect_to_relay(const char* ip, int port);
-    bool get_samples(uint8_t* out, size_t count);
-    uint32_t getLastTick() const { return _last_sample_tick; }
-    RFE_Header_t get_latest_header() const { 
-        std::lock_guard<std::mutex> lock(_mtx_hdr);
-        return _current_header;
-    }
+    
+    // New method: pulls N milliseconds of data at once
+    bool get_ms_blocks(uint8_t* out, RFE_Header_t& first_header, size_t num_ms);
 
 private:
     void ingest_thread();
-    std::vector<uint8_t> _ring;
-    size_t _w_ptr;
-    size_t _r_ptr;
+
+    std::deque<MillisecondBlock> _ready_queue;
+    std::vector<uint8_t> _staging_buffer;
+    RFE_Header_t _staging_header;
+    int _staging_count = 0;
+
     std::mutex _mtx;
     SOCKET _s;
     bool _is_running;
-    uint32_t _last_unix_time = 0; // Tracks the roll
+    uint32_t _last_unix_time = 0;
     bool _aligned = false;
     sockaddr_in _relay_addr{};
-    uint32_t _last_sample_tick = 0; // Tracks the last sample tick for alignment
-    RFE_Header_t _current_header{};
-    mutable std::mutex _mtx_hdr;
+    
+    size_t _max_queue_size;
 };

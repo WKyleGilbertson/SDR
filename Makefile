@@ -41,6 +41,7 @@ MACROS = /DMAJOR_VERSION=$(MAJOR) /DMINOR_VERSION=$(MINOR) \
 
 SDR_OBJS = $(ODIR)/sdr.obj \
            $(ODIR)/versionInfo.obj \
+           $(ODIR)/AcquisitionMgr.obj \
            $(ODIR)/ElasticReceiver.obj \
            $(ODIR)/NCO.obj \
            $(ODIR)/ChannelProcessor.obj \

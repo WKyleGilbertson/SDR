@@ -1,21 +1,14 @@
 #include "ElasticReceiver.h"
 #include <iostream>
-#include <thread>
-#include <vector>
-#include <ctime>
-#include <cstdio>
-#include <ws2tcpip.h>
 
-#pragma comment(lib, "ws2_32.lib")
+ElasticReceiver::ElasticReceiver(size_t max_blocks) 
+    : _max_queue_size(max_blocks), _s(INVALID_SOCKET), _is_running(false), _aligned(false) {
+    _staging_buffer.reserve(8184);
+}
 
-ElasticReceiver::ElasticReceiver(size_t ring_size)
-    : _ring(ring_size), _w_ptr(0), _r_ptr(0), _s(INVALID_SOCKET), _is_running(false), _last_unix_time(0), _aligned(false) {}
-
-ElasticReceiver::~ElasticReceiver()
-{
+ElasticReceiver::~ElasticReceiver() {
     _is_running = false;
-    if (_s != INVALID_SOCKET)
-        closesocket(_s);
+    if (_s != INVALID_SOCKET) closesocket(_s);
     WSACleanup();
 }
 
@@ -62,136 +55,77 @@ bool ElasticReceiver::connect_to_relay(const char *ip, int port)
     return true;
 }
 
-void ElasticReceiver::ingest_thread()
-{
-    std::vector<uint8_t> tmp(4096);
+void ElasticReceiver::ingest_thread() {
+    std::vector<uint8_t> packet_raw(2048);
     const int H_SIZE = sizeof(RFE_Header_t);
 
-    while (_is_running)
-    {
+    while (_is_running) {
         sockaddr_in src{};
         int addr_len = sizeof(src);
-        int len = recvfrom(_s, (char *)tmp.data(), (int)tmp.size(), 0, (struct sockaddr *)&src, &addr_len);
+        int len = recvfrom(_s, (char*)packet_raw.data(), (int)packet_raw.size(), 0, (struct sockaddr*)&src, &addr_len);
+        
+        if (len < H_SIZE) continue;
 
-        if (len >= H_SIZE)
-        {
-            RFE_Header_t *hdr = (RFE_Header_t *)tmp.data();
-            {
-                std::lock_guard<std::mutex> lock(_mtx_hdr);
-                _current_header = *hdr;
-            }
+        RFE_Header_t* hdr = (RFE_Header_t*)packet_raw.data();
+        uint8_t* payload = packet_raw.data() + H_SIZE;
+        size_t payload_len = len - H_SIZE;
 
-            // Check for Unix second roll to align our ring buffer's start (0) to a 1-second epoch
-            // Inside ingest_thread, replace the Unix Second Roll block:
-
-            /**/
-            if (hdr->unix_time > _last_unix_time)
-            {
-                if (!_aligned && _last_unix_time != 0)
-                {
-                    std::lock_guard<std::mutex> lock(_mtx);
-
-                    uint32_t phase = hdr->sample_tick % 16368;
-                    uint32_t ms_val = 0;
-                    ms_val = (int)((hdr->sample_tick % 16368000) / 16368);
-
-                    _w_ptr = phase;
-                    _r_ptr = 0;
+        // --- Alignment Logic ---
+        if (hdr->unix_time > _last_unix_time) {
+            if (!_aligned && _last_unix_time != 0) {
+                // Determine how many samples into the MS we are
+                // 16368 samples per ms / 2046 samples per packet = 8 packets
+                uint32_t packet_index = (hdr->sample_tick % 16368) / 2046;
+                
+                // If we aren't at the start of a millisecond (packet_index 0),
+                // we skip until the next millisecond boundary
+                if (packet_index == 0) {
                     _aligned = true;
-                    _last_sample_tick = hdr->sample_tick;
-
-                    struct tm gmt_info;
-                    __time64_t t_val = (__time64_t)hdr->unix_time;
-
-                    if (_gmtime64_s(&gmt_info, &t_val) == 0)
-                    {
-                        auto print2 = [](int v)
-                        {
-                            if (v < 10)
-                                std::cout << '0';
-                            std::cout << v;
-                        };
-
-                        std::cout << "\n[+] ZERO CROSS LOCKED: " << (gmt_info.tm_year + 1900) << "-";
-                        print2(gmt_info.tm_mon + 1);
-                        std::cout << "-";
-                        print2(gmt_info.tm_mday);
-                        std::cout << "T";
-                        print2(gmt_info.tm_hour);
-                        std::cout << ":";
-                        print2(gmt_info.tm_min);
-                        std::cout << ":";
-                        print2(gmt_info.tm_sec);
-                        std::cout << ".";
-
-                        if (ms_val < 100)
-                            std::cout << '0';
-                        if (ms_val < 10)
-                            std::cout << '0';
-                        std::cout << ms_val << "Z | Phase " << phase << std::endl;
-                    }
-                    else
-                    {
-                        std::cout << "\n[+] ZERO CROSS LOCKED: [Time Err] | Phase " << phase << std::endl;
-                    }
+                    std::cout << "[+] EPOCH ALIGNED: Tick " << hdr->sample_tick << std::endl;
                 }
-                _last_unix_time = hdr->unix_time;
             }
-            /**/
-            if (_aligned)
-            {
-                size_t p_len = (size_t)(len - H_SIZE);
+            _last_unix_time = hdr->unix_time;
+        }
+
+        if (_aligned) {
+            if (_staging_count == 0) _staging_header = *hdr;
+            
+            _staging_buffer.insert(_staging_buffer.end(), payload, payload + payload_len);
+            _staging_count++;
+
+            // Once we have 8 packets (1ms), push to queue
+            if (_staging_count == 8) {
                 std::lock_guard<std::mutex> lock(_mtx);
-                size_t space = _ring.size() - _w_ptr;
-                if (p_len <= space)
-                {
-                    memcpy(_ring.data() + _w_ptr, tmp.data() + H_SIZE, p_len);
-                    _w_ptr = (_w_ptr + p_len) % _ring.size();
-                }
-                else
-                {
-                    memcpy(_ring.data() + _w_ptr, tmp.data() + H_SIZE, space);
-                    memcpy(_ring.data(), tmp.data() + H_SIZE + space, p_len - space);
-                    _w_ptr = p_len - space;
-                }
+                _ready_queue.push_back({_staging_header, _staging_buffer});
+                
+                if (_ready_queue.size() > _max_queue_size) _ready_queue.pop_front();
+
+                _staging_buffer.clear();
+                _staging_count = 0;
             }
         }
     }
 }
 
-bool ElasticReceiver::get_samples(uint8_t *out, size_t count)
-{
-    while (_is_running)
-    {
-        if (_aligned)
+bool ElasticReceiver::get_ms_blocks(uint8_t* out, RFE_Header_t& first_header, size_t num_ms) {
+    while (_is_running) {
         {
-            size_t avail;
-            {
-                std::lock_guard<std::mutex> lock(_mtx);
-                avail = (_w_ptr >= _r_ptr) ? (_w_ptr - _r_ptr) : (_ring.size() - _r_ptr + _w_ptr);
-            }
-            if (avail >= count)
-                break;
+            std::lock_guard<std::mutex> lock(_mtx);
+            if (_ready_queue.size() >= num_ms) break;
         }
-        // If we aren't aligned or don't have enough data, yield.
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
-    if (!_is_running)
-        return false;
+    if (!_is_running) return false;
 
     std::lock_guard<std::mutex> lock(_mtx);
-    size_t space = _ring.size() - _r_ptr;
-    if (count <= space)
-    {
-        memcpy(out, _ring.data() + _r_ptr, count);
-        _r_ptr = (_r_ptr + count) % _ring.size();
+    for (size_t i = 0; i < num_ms; ++i) {
+        MillisecondBlock block = _ready_queue.front();
+        if (i == 0) first_header = block.header;
+        
+        memcpy(out + (i * 8184), block.data.data(), 8184);
+        _ready_queue.pop_front();
     }
-    else
-    {
-        memcpy(out, _ring.data() + _r_ptr, space);
-        memcpy(out + space, _ring.data(), count - space);
-        _r_ptr = count - space;
-    }
+
     return true;
 }
