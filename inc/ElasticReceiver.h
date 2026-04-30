@@ -32,9 +32,19 @@ public:
     
     // New method: pulls N milliseconds of data at once
     bool get_ms_blocks(uint8_t* out, RFE_Header_t& first_header, size_t num_ms);
+    size_t get_queue_size() {
+        std::lock_guard<std::mutex> lock(_mtx);
+        return _ready_queue.size();
+    };
+    uint32_t get_last_unix_time() {
+        std::lock_guard<std::mutex> lock(_mtx);
+        return _last_unix_time;
+    };
 
 private:
     void ingest_thread();
+    uint16_t _samples_per_ms = 16368;
+    uint8_t _packets_per_ms = 8; // 16368 samples/ms / 2046 samples/packet
 
     std::deque<MillisecondBlock> _ready_queue;
     std::vector<uint8_t> _staging_buffer;

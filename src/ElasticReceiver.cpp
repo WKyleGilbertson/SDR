@@ -58,6 +58,7 @@ bool ElasticReceiver::connect_to_relay(const char *ip, int port)
 void ElasticReceiver::ingest_thread() {
     std::vector<uint8_t> packet_raw(2048);
     const int H_SIZE = sizeof(RFE_Header_t);
+    uint32_t current_fs_rate = 0;
 
     while (_is_running) {
         sockaddr_in src{};
@@ -70,42 +71,49 @@ void ElasticReceiver::ingest_thread() {
         uint8_t* payload = packet_raw.data() + H_SIZE;
         size_t payload_len = len - H_SIZE;
 
-        // --- Alignment Logic ---
-        if (hdr->unix_time > _last_unix_time) {
-            if (!_aligned && _last_unix_time != 0) {
-                // Determine how many samples into the MS we are
-                // 16368 samples per ms / 2046 samples per packet = 8 packets
-                uint32_t packet_index = (hdr->sample_tick % 16368) / 2046;
-                
-                // If we aren't at the start of a millisecond (packet_index 0),
-                // we skip until the next millisecond boundary
-                if (packet_index == 0) {
-                    _aligned = true;
-                    std::cout << "[+] EPOCH ALIGNED: Tick " << hdr->sample_tick << std::endl;
-                }
-            }
-            _last_unix_time = hdr->unix_time;
+        // Dynamic Sample Rate Detection
+        if (hdr->fs_rate != current_fs_rate) {
+            current_fs_rate = hdr->fs_rate;
+            _samples_per_ms = current_fs_rate / 1000;
+            _packets_per_ms = (uint8_t)(_samples_per_ms / 2046);
+            std::cout << "[*] Rate Detected: " << current_fs_rate 
+                      << " Hz (" << (int)_packets_per_ms << " ppm)" << std::endl;
         }
 
+        // --- Alignment Logic (Millisecond Roll) ---
+        uint32_t packet_index = (hdr->sample_tick % _samples_per_ms) / 2046;
+        if (!_aligned && packet_index == 0) {
+            _aligned = true;
+            std::cout << "[+] EPOCH ALIGNED: Tick " << hdr->sample_tick << std::endl;
+        }
+
+        // --- Data Staging Logic ---
+        // This must be INSIDE the while loop to process every packet
         if (_aligned) {
-            if (_staging_count == 0) _staging_header = *hdr;
+            if (_staging_count == 0) {
+                _staging_header = *hdr;
+            }
             
             _staging_buffer.insert(_staging_buffer.end(), payload, payload + payload_len);
             _staging_count++;
 
-            // Once we have 8 packets (1ms), push to queue
-            if (_staging_count == 8) {
+            // Push to queue once a full millisecond is staged
+            if (_staging_count >= _packets_per_ms) {
                 std::lock_guard<std::mutex> lock(_mtx);
                 _ready_queue.push_back({_staging_header, _staging_buffer});
+                _last_unix_time = hdr->unix_time;
                 
-                if (_ready_queue.size() > _max_queue_size) _ready_queue.pop_front();
-
+                if (_ready_queue.size() > _max_queue_size) {
+                    _ready_queue.pop_front();
+                }
+                
                 _staging_buffer.clear();
                 _staging_count = 0;
             }
         }
-    }
+    } // End of while (_is_running)
 }
+
 
 bool ElasticReceiver::get_ms_blocks(uint8_t* out, RFE_Header_t& first_header, size_t num_ms) {
     while (_is_running) {

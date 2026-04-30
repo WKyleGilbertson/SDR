@@ -4,6 +4,7 @@
 #include <vector>
 #include <thread>
 #include <numeric>
+#include "L1IFUtil.hpp"
 #include "versionInfo.hpp"
 #include "ElasticReceiver.h"
 #include "AcquisitionMgr.hpp"
@@ -89,10 +90,21 @@ int main()
                 }
                 if (acq_needed)
                 {
+                    auto start_acq = std::chrono::steady_clock::now();
+                    uint32_t current_unix = rx.get_last_unix_time();
+                    uint32_t  samples_into_second = meta.sample_tick % meta.fs_rate;
+                    uint32_t ms_offset = (samples_into_second * 1000)/meta.fs_rate;
+                    std::string time_tag = get_iso8601_timestamp(current_unix, ms_offset);
+                    if (ms_offset > 999) ms_offset = 999;
+                    printf("[*] Start Acq: %s (Unix: %u, Tick: %u)\n",
+                           time_tag.c_str(), current_unix, meta.sample_tick);
+
                     // 1. Run the acquisition
                     // auto results = acqMgr.run(meta, block.data());
                     auto results = acqMgr.run(meta, block.data());
 
+                    auto end_acq = std::chrono::steady_clock::now();
+                    double acq_duration = std::chrono::duration<double>(end_acq - start_acq).count();
                     if (!results.empty())
                     {
                         // 2. Print the list of found satellites to match your desired output
@@ -101,6 +113,7 @@ int main()
                             printf("LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f | Carrier %5.2f %u\n",
                                    res.prn, res.snr, res.bin, res.codePhase, res.phase, res.sampleTick % 16368);
                         }
+                        printf("[*] Acquisition Duration: %.2f seconds\n", acq_duration);
 
                         // 3. Selection Logic: Default to the first satellite, but look for PRN 131
                         AcqResult selected_sat = results[0];
