@@ -101,6 +101,7 @@ int main(int argc, char** argv) {
         freeaddrinfo(res);
     }
 
+//    uint32_t last_unix_second = 0;
     uint32_t absolute_tick = 0;
     uint32_t bytes_since_print = 0;
     uint64_t total_bytes = 0;
@@ -127,6 +128,9 @@ int main(int argc, char** argv) {
 
                 while (S.count >= PAYLOAD_SIZE) {
                     S.hdr.unix_time = (uint32_t)time(NULL);
+                    if (absolute_tick >= SAMPLE_RATE) {
+                        absolute_tick = 0;
+                    }
                     S.hdr.sample_tick = absolute_tick;
                     
                     // Copy header
