@@ -4,6 +4,7 @@
 #include <vector>
 #include "NCO.h"
 #include "g2init.h"
+#include "L1IFUtil.hpp"  // Has the bit unpacking
 #include "PCSEngine.hpp" // This defines AcqResult
 
 struct CorrRes

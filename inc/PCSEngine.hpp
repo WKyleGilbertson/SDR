@@ -24,48 +24,6 @@ struct AcqResult
     float codePhase;         // sub-ms code phase (0.0 - 1022.99)
 };
 
-/**
- * L1IFStream Bit Unpacking (MAX2769 bit-packed format)
- * =========================================================
- * Format: 2-bit Sign-Magnitude, 2 complex samples per byte.
- * * FNHN (Default Hardware Mapping): 
- * Sample 0 (Older) is in the High Nibble [7:4]
- * Sample 1 (Newer) is in the Low Nibble  [3:0]
- *
- * Byte Layout (8 bits):
- * ---------------------------------------------------------
- * | Bit 7 | Bit 6 | Bit 5 | Bit 4 | Bit 3 | Bit 2 | Bit 1 | Bit 0 |
- * |-------|-------|-------|-------|-------|-------|-------|-------|
- * |  Q0_s |  Q0_m |  I0_s |  I0_m |  Q1_s |  Q1_m |  I1_s |  I1_m |
- * ---------------------------------------------------------
- * |   Sample 0 (Older / High)     |   Sample 1 (Newer / Low)      |
- * * Mapping Logic:
- * Sign (s): 0 -> Positive, 1 -> Negative
- * Mag  (m): 0 -> 1 (Low),  1 -> 3 (High)
- *
-inline void unpackL1IF(uint8_t b, kiss_fft_cpx& c0, kiss_fft_cpx& c1, bool isFNLN = false) {
-    // Helper to map bits to 16-bit fixed-point values (Shifted for headroom)
-    auto map = [](uint8_t m, uint8_t s) -> int16_t {
-        int16_t val = (s == 0) ? 1 : -1;
-        if (m != 0) val *= 3;
-        return val << 3; 
-    };
-
-    if (isFNLN) {
-        // FNLN: Low nibble contains the earlier sample (Sample 0)
-        c0.r = map((b >> 0) & 1, (b >> 1) & 1); // I0
-        c0.i = map((b >> 2) & 1, (b >> 3) & 1); // Q0
-        c1.r = map((b >> 4) & 1, (b >> 5) & 1); // I1
-        c1.i = map((b >> 6) & 1, (b >> 7) & 1); // Q1
-    } else {
-        // FNHN: High nibble contains the earlier sample (Sample 0)
-        c0.r = map((b >> 4) & 1, (b >> 5) & 1); // I0
-        c0.i = map((b >> 6) & 1, (b >> 7) & 1); // Q0
-        c1.r = map((b >> 0) & 1, (b >> 1) & 1); // I1
-        c1.i = map((b >> 2) & 1, (b >> 3) & 1); // Q1
-    }
-}
-    Moved to L1IFUtil.hpp */
 class PCSEngine
 {
 private:

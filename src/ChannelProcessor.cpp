@@ -32,52 +32,40 @@ CorrRes ChannelProcessor::process(const uint8_t *data, size_t count)
     const double code_doppler = _doppler_hz / 1540.0;
     const double chips_per_sample = (1023000.0 + code_doppler) / _fs;
 
+    const UnpackEntry *lut = GetLUT_FNHN();
+
     for (size_t i = 0; i < count; ++i)
     {
-        uint8_t b = data[i];
+        // 2. Single lookup for both samples in the byte
+        const UnpackEntry &entry = lut[data[i]];
 
-        // --- SAMPLE 0 (High Nibble: Bits 7:4) ---
+        // --- SAMPLE 0 (High Nibble) ---
         {
             uint32_t nco_idx = _nco.clk();
             int8_t code_val = _ca_replica[(int)_code_phase % 1023];
 
-            // Unpack Sample 0 (FNHN)
-            float i0 = mapL1IF((b >> 6) & 1, (b >> 7) & 1); // Q0_s is bit 7, Q0_m is bit 6?
-            float q0 = mapL1IF((b >> 4) & 1, (b >> 5) & 1); // No, looking at your comment:
-            // | Q0_s (7) | Q0_m (6) | I0_s (5) | I0_m (4) |
-
-            float real_sample = mapL1IF((b >> 4) & 1, (b >> 5) & 1); // I0_m, I0_s
-            float imag_sample = mapL1IF((b >> 6) & 1, (b >> 7) & 1); // Q0_m, Q0_s
-
-            // Despread & Mix
-            acc_i += (real_sample * code_val * _nco.cosine(nco_idx));
-            acc_q -= (imag_sample * code_val * _nco.sine(nco_idx));
+            // Access directly from LUT entry (replaces mapL1IF calls)
+            acc_i += ((float)entry.s0.i * code_val * _nco.cosine(nco_idx));
+            acc_q -= ((float)entry.s0.q * code_val * _nco.sine(nco_idx));
 
             _code_phase += chips_per_sample;
         }
 
-        // --- SAMPLE 1 (Low Nibble: Bits 3:0) ---
+        // --- SAMPLE 1 (Low Nibble) ---
         {
             uint32_t nco_idx = _nco.clk();
             int8_t code_val = _ca_replica[(int)_code_phase % 1023];
 
-            // Unpack Sample 1 (FNHN)
-            // | Q1_s (3) | Q1_m (2) | I1_s (1) | I1_m (0) |
-            float real_sample = mapL1IF((b >> 0) & 1, (b >> 1) & 1); // I1_m, I1_s
-            float imag_sample = mapL1IF((b >> 2) & 1, (b >> 3) & 1); // Q1_m, Q1_s
-
-            acc_i += (real_sample * code_val * _nco.cosine(nco_idx));
-            acc_q -= (imag_sample * code_val * _nco.sine(nco_idx));
+            // Access directly from LUT entry
+            acc_i += ((float)entry.s1.i * code_val * _nco.cosine(nco_idx));
+            acc_q -= ((float)entry.s1.q * code_val * _nco.sine(nco_idx));
 
             _code_phase += chips_per_sample;
         }
 
-        // Ensure we are always within 1ms of C/A code
-        while (_code_phase >= 1023.0)
+        // Epoch wrap-around logic...
+        if (_code_phase >= 1023.0)
             _code_phase -= 1023.0;
-        while (_code_phase < 0.0)
-            _code_phase += 1023.0;
-        // printf(" [DEBUG INTERNAL CODE: %8.3f] ", this->_code_phase);
     }
     return {(double)acc_i, (double)acc_q, (double)_code_phase};
 }
