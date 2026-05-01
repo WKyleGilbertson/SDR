@@ -91,13 +91,14 @@ int main()
                 if (acq_needed)
                 {
                     auto start_acq = std::chrono::steady_clock::now();
-                    uint32_t current_unix = rx.get_last_unix_time();
-                    uint32_t  samples_into_second = meta.sample_tick % meta.fs_rate;
-                    uint32_t ms_offset = (samples_into_second * 1000)/meta.fs_rate;
-                    std::string time_tag = get_iso8601_timestamp(current_unix, ms_offset);
-                    if (ms_offset > 999) ms_offset = 999;
-                    printf("[*] Start Acq: %s (Unix: %u, Tick: %u)\n",
-                           time_tag.c_str(), current_unix, meta.sample_tick);
+                    TimeTrio tme3 = rx.get_time_trio();
+                    std::string block_tag = get_iso8601_timestamp(tme3.unixSecond, tme3.msCount);
+                    fprintf(stdout, "[*] Current Buffer Insertion Time: %s\n",
+                            block_tag.c_str());
+                    TimeTrio acqTime = get_timeData(meta.unix_time, meta.sample_tick, meta.fs_rate);
+                    std::string acq_tag = get_iso8601_timestamp(acqTime.unixSecond, acqTime.msCount);
+                    fprintf(stdout, "[*] Block Time: %s Unix: %u, Tick: %u\n",
+                            acq_tag.c_str(), acqTime.unixSecond, meta.sample_tick);
 
                     // 1. Run the acquisition
                     // auto results = acqMgr.run(meta, block.data());

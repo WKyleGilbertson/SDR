@@ -13,3 +13,5 @@ struct TimeTrio {
 };
 
 std::string get_iso8601_timestamp(uint32_t unix_time, uint32_t ms_offset);
+
+TimeTrio get_timeData(uint32_t unixSeconds, uint32_t sampleTick, uint32_t Fs);

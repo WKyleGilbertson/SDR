@@ -85,8 +85,8 @@ void ElasticReceiver::ingest_thread()
             current_fs_rate = hdr->fs_rate;
             _samples_per_ms = (uint16_t)(current_fs_rate / 1000);
             _packets_per_ms = (uint8_t)(_samples_per_ms / 2046);
-            std::cout << "[*] Rate Detected: " << current_fs_rate
-                      << " Hz (" << (int)_packets_per_ms << " ppm)" << std::endl;
+            fprintf(stdout, "[*] Rate Detected: %8u Hz (%hhu ppm)\n",
+                    current_fs_rate, _packets_per_ms );
         }
 
         total_packets_in_second = (uint16_t)(hdr->fs_rate / 2046); // IF alway 1023 pkt
@@ -95,13 +95,11 @@ void ElasticReceiver::ingest_thread()
         _ms_frac = (uint8_t)(current_packet_in_second % _packets_per_ms);
 
         // --- Alignment Logic (Millisecond Roll) ---
-        // uint32_t packet_index = (hdr->sample_tick % _samples_per_ms) / 2046;
         if (!_aligned && _ms_frac == 0)
         {
             _aligned = true;
-            std::cout << "[+] Fraction Align: Tick " << hdr->sample_tick
-                      << " count: " << (int)_ms_count << " "
-                      << " frac: " << (int)_ms_frac << std::endl;
+            fprintf(stdout, "[*] Fractional Millisecond Alignment: Tick %8u count %3d frac %1d\n",
+                    hdr->sample_tick, _ms_count, _ms_frac);
         }
 
         // --- Data Staging Logic ---
@@ -122,6 +120,8 @@ void ElasticReceiver::ingest_thread()
                 std::lock_guard<std::mutex> lock(_mtx);
                 _ready_queue.push_back({_staging_header, _staging_buffer});
                 _last_unix_time = hdr->unix_time;
+                _last_ms_count = _ms_count;
+                _last_ms_frac = _ms_frac;
 
                 if (_ready_queue.size() > _max_queue_size)
                 {
@@ -162,4 +162,12 @@ bool ElasticReceiver::get_ms_blocks(uint8_t *out, RFE_Header_t &first_header, si
     }
 
     return true;
+}
+
+TimeTrio ElasticReceiver::get_time_trio() {
+    TimeTrio tme3;
+    tme3.unixSecond = _last_unix_time;
+    tme3.msCount = _last_ms_count;
+    tme3.fracMS = _last_ms_frac;
+    return tme3;
 }

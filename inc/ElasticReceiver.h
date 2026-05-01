@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include "L1IFUtil.hpp"
 
 #pragma pack(push, 1)
 struct RFE_Header_t
@@ -23,12 +24,6 @@ struct MillisecondBlock
 {
     RFE_Header_t header;
     std::vector<uint8_t> data; // 8184 bytes
-};
-
-struct TimeTrio {
-    uint32_t unixSecond;
-    uint16_t msCount;
-    uint8_t  fracMS;
 };
 
 class ElasticReceiver
@@ -51,6 +46,7 @@ public:
         std::lock_guard<std::mutex> lock(_mtx);
         return _last_unix_time;
     };
+    TimeTrio get_time_trio();
 
 private:
     void ingest_thread();
@@ -67,7 +63,9 @@ private:
     bool _is_running;
     uint32_t _last_unix_time = 0;
     uint16_t _ms_count = 0; // Which millisecond (0-999)
+    uint16_t _last_ms_count = 0;
     uint8_t _ms_frac = 0; // Which fraction (0-7, 03, or 0-1)
+    uint8_t _last_ms_frac = 0;
     bool _aligned = false;
     sockaddr_in _relay_addr{};
 
