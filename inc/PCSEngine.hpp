@@ -42,7 +42,7 @@ struct AcqResult
  * * Mapping Logic:
  * Sign (s): 0 -> Positive, 1 -> Negative
  * Mag  (m): 0 -> 1 (Low),  1 -> 3 (High)
- */
+ *
 inline void unpackL1IF(uint8_t b, kiss_fft_cpx& c0, kiss_fft_cpx& c1, bool isFNLN = false) {
     // Helper to map bits to 16-bit fixed-point values (Shifted for headroom)
     auto map = [](uint8_t m, uint8_t s) -> int16_t {
@@ -65,6 +65,7 @@ inline void unpackL1IF(uint8_t b, kiss_fft_cpx& c0, kiss_fft_cpx& c1, bool isFNL
         c1.i = map((b >> 2) & 1, (b >> 3) & 1); // Q1
     }
 }
+    Moved to L1IFUtil.hpp */
 class PCSEngine
 {
 private:

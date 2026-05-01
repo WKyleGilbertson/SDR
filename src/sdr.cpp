@@ -145,7 +145,7 @@ int main()
                         acq_needed = false;
                         continue; // Skip the rest of this loop to start tracking immediately
                     }
-                }
+                } // End acq_needed
 
                 if (chan)
                 {

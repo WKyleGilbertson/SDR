@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <cstdint>
+#include "L1IFUtil.hpp"
 #include "PCSEngine.hpp"        // Contains AcqResult and unpackL1IF
 #include "ElasticReceiver.h"    // Provides RFE_Header_t
 

@@ -6,15 +6,18 @@ std::vector<AcqResult> AcquisitionMgr::run(const RFE_Header_t& meta, uint8_t* ra
     // Telemetry is now anchored: meta.sample_tick is the START of raw_ptr
     const uint32_t anchor = meta.sample_tick;
     const uint32_t aligned_anchor = anchor - (anchor % 16368);
+    const UnpackEntry* lut = GetLUT_FNHN(); // Call the function
 
     // 1. Unpack and Align 5ms of data
     // raw_ptr is now guaranteed to be 1ms-aligned by ElasticReceiver
     std::vector<kiss_fft_cpx> aligned_data(FFT_SIZE * NUM_MS, {0, 0});
     for (int ms = 0; ms < NUM_MS; ms++) {
         uint8_t *ms_source = raw_ptr + (ms * 8184); 
-        kiss_fft_cpx *ms_dest = &aligned_data[ms * FFT_SIZE];
+        ComplexSample* ms_dest = reinterpret_cast<ComplexSample*>(&aligned_data[ms * FFT_SIZE]);
         for (size_t i = 0; i < 8184; ++i) {
-            unpackL1IF(ms_source[i], ms_dest[2 * i], ms_dest[2 * i + 1 ]);
+            const UnpackEntry& entry = lut[ms_source[i]];
+            ms_dest[2 * i]      = entry.s0;
+            ms_dest[2 * i + 1]  = entry.s1;
         }
     }
 
