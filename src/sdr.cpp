@@ -111,8 +111,8 @@ int main()
                         // 2. Print the list of found satellites to match your desired output
                         for (const auto &res : results)
                         {
-                            printf("LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f | Carrier %5.2f %u\n",
-                                   res.prn, res.snr, res.bin, res.codePhase, res.phase, res.sampleTick % 16368);
+                            printf("LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f | Carrier %5.2f\n",
+                                   res.prn, res.snr, res.bin, res.codePhase, res.phase);
                         }
                         printf("[*] Acquisition Duration: %.2f seconds\n", acq_duration);
 
@@ -194,16 +194,15 @@ int main()
                         // Pull live tracking data from the channel object
                         // Assuming your ChannelProcessor has these getters:
                         // double current_code = chan->getCodePhase();
-                        double current_code = res.current_code_phase;
+                        // In your tracking loop
+
+//                        double current_code = res.current_code_phase;
+                        double display_code = (std::isnan(res.current_code_phase)) ? 0.0 : res.current_code_phase;
                         // double current_code = res.code_phase;
                         double carrier_phase = atan2(res.q_val, res.i_val);
-                        // Enhanced Output
                         printf("\r[TRK] PRN %3d | Carr: %+4.1f Hz | Code: %8.3f | Mag: %5.0f | Lag: %+7.4fs   ",
                                // selected_sat.prn, 0.1, current_code, display_mag, avg_lag);
-                               chan->getPRN(), carrier_phase, current_code, display_mag, avg_lag);
-                        // Output with fixed formatting to prevent text jitter
-                        //                        printf("\r[DSP] T+%7.2fs | Mag:%9.0f | Avg Lag:%+8.4fs",
-                        //                               session_time, display_mag, avg_lag);
+                               chan->getPRN(), carrier_phase, display_code, display_mag, avg_lag);
                         fflush(stdout);
 
                         // Reset display counters

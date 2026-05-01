@@ -15,7 +15,7 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init)
     _prn = init.prn;
     _code_phase = init.codePhase; // Ensure this matches struct field name
 
-    float _doppler_hz = init.bin * 500.0f;
+    _doppler_hz = init.bin * 500.0f;
     _nco.SetFrequency(4.092e6f + _doppler_hz); // Fixed to 4.092 MHz
 
     G2INIT sv(_prn, 0);
@@ -72,9 +72,12 @@ CorrRes ChannelProcessor::process(const uint8_t *data, size_t count)
             _code_phase += chips_per_sample;
         }
 
-        if (_code_phase >= 1023.0)
+        // Ensure we are always within 1ms of C/A code
+        while (_code_phase >= 1023.0)
             _code_phase -= 1023.0;
-            //printf(" [DEBUG INTERNAL CODE: %8.3f] ", this->_code_phase);
+        while (_code_phase < 0.0)
+            _code_phase += 1023.0;
+        // printf(" [DEBUG INTERNAL CODE: %8.3f] ", this->_code_phase);
     }
     return {(double)acc_i, (double)acc_q, (double)_code_phase};
 }
