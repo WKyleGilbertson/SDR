@@ -116,6 +116,8 @@ int main()
                         }
                         printf("[*] Acquisition Duration: %.2f seconds\n", acq_duration);
 
+                        rx.jump_to_latest_epoch();
+
                         // 3. Selection Logic: Default to the first satellite, but look for PRN 131
                         AcqResult selected_sat = results[0];
                         bool found_priority = false;

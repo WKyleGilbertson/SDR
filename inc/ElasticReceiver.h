@@ -33,7 +33,7 @@ public:
     ~ElasticReceiver();
 
     bool connect_to_relay(const char *ip, int port);
-
+    void jump_to_latest_epoch();
     // New method: pulls N milliseconds of data at once
     bool get_ms_blocks(uint8_t *out, RFE_Header_t &first_header, size_t num_ms);
     size_t get_queue_size()
@@ -41,11 +41,14 @@ public:
         std::lock_guard<std::mutex> lock(_mtx);
         return _ready_queue.size();
     };
+
+
     uint32_t get_last_unix_time()
     {
         std::lock_guard<std::mutex> lock(_mtx);
         return _last_unix_time;
     };
+
     TimeTrio get_time_trio();
 
 private:

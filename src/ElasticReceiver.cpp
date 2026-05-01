@@ -135,6 +135,27 @@ void ElasticReceiver::ingest_thread()
     } // End of while (_is_running)
 }
 
+void ElasticReceiver::jump_to_latest_epoch() {
+    std::lock_guard<std::mutex> lock(_mtx);
+    
+    int latest_epoch_index = -1;
+    // Walk backward from newest data to oldest
+    for (int i = (int)_ready_queue.size() - 1; i >= 0; --i) {
+        // Find the most recent "Top of the Millisecond" (frac 0)
+        if ((_ready_queue[i].header.sample_tick % _samples_per_ms) == 0) {
+            latest_epoch_index = i;
+            break;
+        }
+    }
+
+    if (latest_epoch_index > 0) {
+        // Keep only the latest epoch and everything that came after it
+        for (int i = 0; i < latest_epoch_index; ++i) {
+            _ready_queue.pop_front();
+        }
+    }
+}
+
 bool ElasticReceiver::get_ms_blocks(uint8_t *out, RFE_Header_t &first_header, size_t num_ms)
 {
     while (_is_running)
