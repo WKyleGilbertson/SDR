@@ -8,6 +8,8 @@
 #define M_PI 3.14159265358979323846
 #endif
 
+enum CorrelatorSpacing {halfChip, Narrow};
+
 class NCO {
 public:
     const float ONE_ROTATION = (float) 2.0 * (1u << 31);
@@ -15,15 +17,21 @@ public:
     uint32_t m_lglen, m_len, m_mask, m_phase, m_dphase, m_bias, k, idx;
     float * m_sintable, * m_costable, m_sample_clk;
     uint16_t rotations;
+    uint64_t EPLreg;
+    int8_t Early, Prompt, Late;
     int8_t CACODE[1023];
     float * m_table;
     NCO(const int lgtblsize, const float m_sample_clk);
     ~NCO(void);
     void SetFrequency(float f);
-    void LoadCACODE(int8_t *CODE);
+    void RakeSpacing(CorrelatorSpacing cs);
+    //void LoadCACODE(int8_t *CODE);
+    void LoadCACODE(uint8_t *CODE); // DSP conversion happens in Rake
     uint32_t clk(void);
     float cosine(int32_t idx);
     float sine(int32_t idx);
-//private:
+private:
+    uint64_t E_mask, P_mask, L_mask;
+    uint8_t shift;
 
 };

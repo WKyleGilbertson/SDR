@@ -1,0 +1,1 @@
+cl /Z7 src\NCOTest.cpp src\NCO.cpp src\g2init.cpp /I./inc /DEBUG

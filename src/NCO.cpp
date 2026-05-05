@@ -44,7 +44,34 @@ void NCO::SetFrequency(float f) {
     Frequency = f;
 }
 
-void NCO::LoadCACODE(int8_t *CODE) {
+void NCO::RakeSpacing(CorrelatorSpacing cs) {
+  switch (cs) {
+   case CorrelatorSpacing::Narrow:
+//    printf("Narrow\n");
+    E_mask = 0x0000000000000001;
+    P_mask = 0x0000000000000008; // 3
+    L_mask = 0x0000000000000040; // 6
+    shift  = 3;
+    break;
+   case CorrelatorSpacing::halfChip:
+//    printf("Normal\n");
+/*    E_mask = 0x0000000000000001;
+    P_mask = 0x0000000000080000;// 19
+    L_mask = 0x0000004000000000;// 38
+    shift  = 19; */
+    E_mask = 0x0000000000000001;
+    P_mask = 0x0000000000000100;// 8
+    L_mask = 0x0000000000010000;// 16
+    shift  = 8;
+    break;
+   default:
+//    printf("No Value %d\n", cs);
+      break;
+  }  
+}
+
+//void NCO::LoadCACODE(int8_t *CODE) {
+void NCO::LoadCACODE(uint8_t *CODE) {
   uint16_t i=0;
   for(i = 0; i<1023; i++) {
    CACODE[i] = CODE[i];
@@ -63,6 +90,12 @@ uint32_t NCO::clk(void) {
         rotations %= 1023;
         //EPLreg |= 0x01;
     }
+    EPLreg <<= 1;
+    EPLreg |= ((CACODE[rotations]) & 0x01);
+    Early  = (EPLreg & E_mask) == 1 ? 1 : -1;
+    Prompt = ((EPLreg & P_mask) >> shift) == 1 ? 1 : -1;
+    Late   = ((EPLreg & L_mask) >> 2*shift) == 1 ? 1 : -1;
+
     m_phase += m_dphase; // PHI[n] = PHI[n-1] + (2^32 * f/fs)
     // Grab the top m_lglen bits of this phase word
     index = m_phase >> ((sizeof(uint32_t) * 8) - m_lglen);
