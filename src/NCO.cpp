@@ -2,6 +2,7 @@
 // https://zipcpu.com/dsp/2017/12/09/nco.html
 
 #include "NCO.h"
+#include <cstdio>
 
 NCO::NCO(const int lgtblsize, const float m_sample_clk) {
     SAMPLE_RATE = m_sample_clk;
@@ -13,6 +14,10 @@ NCO::NCO(const int lgtblsize, const float m_sample_clk) {
     // m_mask is 1 for any bit used in the index, zero otherwise
     m_mask = m_len - 1;
     //m_table = new float[m_len];
+    //
+    printf("NCO Init: m_len = %d, this = %p\n", m_len, (void*)this);
+    if (this == nullptr) { printf("CRITICAL: this is null!\n"); }
+//
     m_sintable = new float[m_len];
     m_costable = new float[m_len];
     for (auto k = 0; k < m_len; k++) {

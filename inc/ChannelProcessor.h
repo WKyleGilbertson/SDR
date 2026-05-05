@@ -18,7 +18,8 @@ class ChannelProcessor
 {
 public:
     // Default constructor so 'chan' can exist before acquisition
-    ChannelProcessor() : _fs(16368000.0), _nco(10, 16368000.0f), _code_phase(0) {}
+    ChannelProcessor() : _fs(16368000.0), _nco(10, 16368000.0f), 
+        _carrNco(5, 16368000.0f), _codeNco(5, 16368000.0f), _code_phase(0) {}
     // The real constructor we use after lock
     ChannelProcessor(double fs_rate, const AcqResult &init);
     CorrRes process(const uint8_t *data, size_t count);
@@ -27,7 +28,16 @@ public:
     int getPRN() const {return _prn;}
 
 private:
-    NCO _nco;
+    NCO _nco;       // Keep for PCS / Acquisition logic
+    NCO _carrNco; // Carrier NCO (Initial ~4.092 MHz)
+    NCO _codeNco; // Code NCO (Initial ~1.023 MHz)
+    // Loop Filter State from TrkBST.cpp
+    float _carrFreqBasis;
+    float _codeFreqBasis;
+    float _oldCodeError = 0.0f, _oldCodeNco = 0.0f;
+    float _oldCarrError = 0.0f, _oldCarrNco = 0.0f;
+    // Filter Coefficients
+    float _tau1Carr, _tau2Carr, _tau1Code, _tau2Code;
     double _fs;
     int _prn;
     double _doppler_hz;
