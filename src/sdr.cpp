@@ -108,65 +108,68 @@ int main()
                     auto end_acq = std::chrono::steady_clock::now();
                     double acq_duration = std::chrono::duration<double>(end_acq - start_acq).count();
                     if (!results.empty())
+                    {
+                        activeChannels.clear();
+                        for (const auto &res : results)
                         {
-                            activeChannels.clear();
-                            for (const auto &res : results)
-                            {
-                                ChannelState state;
-                                state.prn = res.prn;
-                                state.result = res;
-                                state.sv = pcs.getSV(res.prn);
-                                state.processor = std::make_unique<ChannelProcessor>(
-                                    (double)meta.fs_rate, state.result, state.sv);
+                            ChannelState state;
+                            state.prn = res.prn;
+                            state.result = res;
+                            state.sv = pcs.getSV(res.prn);
+                            state.processor = std::make_unique<ChannelProcessor>(
+                                (double)meta.fs_rate, state.result, state.sv);
 
-                                activeChannels.push_back(std::move(state));
+                            activeChannels.push_back(std::move(state));
 
-                                printf("LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f\n",
-                                       res.prn, res.snr, res.bin, res.codePhase);
-                            }
-
-                            printf("[*] HANDOVER SUCCESS: %zu channels initialized.\n", activeChannels.size());
-                            acq_needed = false;
-                            rx.jump_to_latest_epoch();
-                            continue;
+                            printf("LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f\n",
+                                   res.prn, res.snr, res.bin, res.codePhase);
                         }
+
+                        printf("[*] HANDOVER SUCCESS: %zu channels initialized.\n", activeChannels.size());
+                        acq_needed = false;
+                        rx.jump_to_latest_epoch();
+                        continue;
+                    }
 
                 } // End acq_needed
 
                 if (!activeChannels.empty())
                 {
-                    // Process all active channels
+                    int focusPRN = 135; // Set target here
                     for (auto &state : activeChannels)
                     {
-                        // Each channel processes the same 10ms block of data
+                        // 1. Process EVERY channel so they stay locked
                         CorrRes res = state.processor->process(block.data(), block_size);
 
-                        // For the UI, we'll just show the first channel or PRN 131 if present
-                        if (state.prn == 131 || state.prn == activeChannels[0].prn)
+                        // 2. ONLY run UI logic for the focus PRN
+                        if (state.prn == focusPRN)
                         {
                             double current_mag = std::sqrt(res.i_val * res.i_val + res.q_val * res.q_val);
                             accumulated_mag += current_mag;
                             mag_count++;
+                            lag_history.push_back((res.current_code_phase - state.handoverPhase) / 1023000.0);
 
-                            // Update UI every 200ms
                             auto now = std::chrono::steady_clock::now();
                             if (std::chrono::duration<double>(now - last_display).count() >= 0.2)
                             {
-                                double avg_lag = std::accumulate(lag_history.begin(), lag_history.end(), 0.0) / lag_history.size();
-                                double display_mag = (mag_count > 0) ? (accumulated_mag / mag_count) : 0;
-                                double display_code = (std::isnan(res.current_code_phase)) ? 0.0 : res.current_code_phase;
+                                double avg_drift = lag_history.empty() ? 0.0 : std::accumulate(lag_history.begin(), lag_history.end(), 0.0) / lag_history.size();
 
-                                printf("\r[TRK] CHANS: %zu | PRN %3d | Code: %8.3f | Mag: %5.0f | Lag: %+7.4fs   ",
-                                       activeChannels.size(), state.prn, display_code, display_mag, avg_lag);
+                                printf("\r[TRK] PRN %3d |Code: %8.3f | I: %6.0f | Q: %6.0f | Mag: %5.0f | D: %3.1es",
+                                       state.prn, res.current_code_phase, res.i_val, res.q_val, accumulated_mag, avg_drift);
+                                //                                printf("\r[TRK] MONITOR: PRN %3d | Code: %8.3f | Mag: %5.0f | Drift: %+11.8fs  ",
+                                //                                       state.prn, res.current_code_phase, accumulated_mag / mag_count, avg_drift);
                                 fflush(stdout);
 
                                 last_display = now;
                                 accumulated_mag = 0;
                                 mag_count = 0;
+                                if (lag_history.size() > 50)
+                                    lag_history.clear();
                             }
                         }
                     }
 
+                    // ... rest of throttling logic ...
                     // Update time tracking (only once per 10ms block, not per channel!)
                     total_data_time += 0.010;
                     session_time += 0.010;

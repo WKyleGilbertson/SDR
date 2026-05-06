@@ -48,7 +48,9 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
     _tau1Carr = loop_gain / (omega_n * omega_n);
     _tau2Carr = 2.0f * zeta / omega_n;
 
-    float Bn_code = 2.0f;
+    //float Bn_code = 2.0f;
+    float Bn_code = 0.5f;
+    //float Bn_code = 1.5f;
     omega_n = Bn_code * 8.0f * zeta / (4.0f * zeta * zeta + 1.0f);
     _tau1Code = loop_gain / (omega_n * omega_n);
     _tau2Code = 2.0f * zeta / omega_n;
@@ -90,6 +92,7 @@ CorrRes ChannelProcessor::process(const uint8_t *data, size_t count)
     }
 
     // --- End of 1ms Block: Apply TrkBST Discriminators ---
+    //float T = 0.010f; // 1ms update interval
     float T = 0.001f; // 1ms update interval
 
     // 1. Carrier Loop Update (Bilinear Transform)
@@ -104,11 +107,15 @@ CorrRes ChannelProcessor::process(const uint8_t *data, size_t count)
 
     // Adjust frequency: Basis + Doppler - Filter Output
     _carrNco.SetFrequency((_carrFreqBasis + _doppler_hz) - carrNcoUpdate);
+    float carrierDrift = (_doppler_hz - carrNcoUpdate);
+    float aiding = carrierDrift / 1540.0f;
 
     // 2. Code Loop Update (Bilinear Transform)
     float E2 = (acc_Ei * acc_Ei) + (acc_Eq * acc_Eq);
     float L2 = (acc_Li * acc_Li) + (acc_Lq * acc_Lq);
     float codeError = (E2 - L2) / (E2 + L2);
+
+//    codeError *= 20.0f;
 
     float codeNcoUpdate = _oldCodeNco +
                           (_tau2Code / _tau1Code) * (codeError - _oldCodeError) +
@@ -118,7 +125,8 @@ CorrRes ChannelProcessor::process(const uint8_t *data, size_t count)
     _oldCodeError = codeError;
 
     // Adjust frequency: Basis - Filter Output
-    _codeNco.SetFrequency(_codeFreqBasis - codeNcoUpdate);
+    //_codeNco.SetFrequency(_codeFreqBasis - codeNcoUpdate);
+    _codeNco.SetFrequency(_codeFreqBasis + codeNcoUpdate + aiding);
 
     // 3. High-Precision Code Phase Calculation
     // Combine coarse rotations (0-1022) with fine NCO phase (0-1.0)

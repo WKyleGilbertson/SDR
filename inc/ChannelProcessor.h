@@ -50,6 +50,8 @@ struct ChannelState {
     AcqResult result;   // Metadata from PCS (PRN, CodePhase, Bin)
     G2INIT    sv;       // The Gold Code replica (bits)
     std::unique_ptr<ChannelProcessor> processor; // The active tracker
+    double handoverPhase = 0.0;
+    bool isSynchronized = false;
     bool isActive() const {return processor != nullptr;}
     ChannelState() : prn(0), sv(0, 0) {}
 };
