@@ -82,7 +82,8 @@ int main()
         while (true)
         {
             // Pull data from the ElasticReceiver's Ring Buffer
-            if (rx.get_ms_blocks(block.data(), meta, 10))
+            // if (rx.get_ms_blocks(block.data(), meta, 10))
+            if (rx.get_ms_blocks(block.data(), meta, 5))
             {
                 if (first)
                 {
@@ -135,7 +136,9 @@ int main()
 
                 if (!activeChannels.empty())
                 {
-                    int focusPRN = 135; // Set target here
+                    // int focusPRN = 135; // Set target here
+                     int focusPRN = 131; // Set target here
+                    //int focusPRN = 29; // Set target here
                     for (auto &state : activeChannels)
                     {
                         // 1. Process EVERY channel so they stay locked
@@ -144,20 +147,27 @@ int main()
                         // 2. ONLY run UI logic for the focus PRN
                         if (state.prn == focusPRN)
                         {
-                            double current_mag = std::sqrt(res.i_val * res.i_val + res.q_val * res.q_val);
+                            std::string bits = "";
+                            for (int8_t s : res.symbols)
+                            {
+                                bits += (s > 0) ? "#" : "-";
+                            }
+
+                            double current_mag = std::sqrt(res.Pi * res.Pi + res.Pq * res.Pq);
                             accumulated_mag += current_mag;
                             mag_count++;
-                            lag_history.push_back((res.current_code_phase - state.handoverPhase) / 1023000.0);
+                            lag_history.push_back((res.code_phase - state.handoverPhase) / 1023000.0);
 
                             auto now = std::chrono::steady_clock::now();
                             if (std::chrono::duration<double>(now - last_display).count() >= 0.2)
                             {
                                 double avg_drift = lag_history.empty() ? 0.0 : std::accumulate(lag_history.begin(), lag_history.end(), 0.0) / lag_history.size();
 
-                                printf("\r[TRK] PRN %3d |Code: %8.3f | I: %6.0f | Q: %6.0f | Mag: %5.0f | D: %3.1es",
-                                       state.prn, res.current_code_phase, res.i_val, res.q_val, accumulated_mag, avg_drift);
-                                //                                printf("\r[TRK] MONITOR: PRN %3d | Code: %8.3f | Mag: %5.0f | Drift: %+11.8fs  ",
-                                //                                       state.prn, res.current_code_phase, accumulated_mag / mag_count, avg_drift);
+                                // printf("\r[TRK] PRN %3d |Code: %8.3f | I: %6.0f | Q: %6.0f | Mag: %5.0f | D: %3.1es",
+                                //        state.prn, res.code_phase, res.Pi, res.Pq, accumulated_mag, avg_drift);
+                                //  Updated Printf to show the bit pattern at the end
+                                printf("\r[TRK] PRN %3d |Code: %8.3f | I: %6.0f | Q: %6.0f | D: %3.1es | Bits: %s",
+                                       state.prn, res.code_phase, res.Pi, res.Pq, avg_drift, bits.c_str());
                                 fflush(stdout);
 
                                 last_display = now;

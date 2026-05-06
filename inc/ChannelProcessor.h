@@ -9,9 +9,10 @@
 
 struct CorrRes
 {
-    double i_val;
-    double q_val;
-    double current_code_phase;
+    double Pi;
+    double Pq;
+    double code_phase;
+    std::vector<int8_t> symbols; // hold the sign of acc_Pi for each ms
 };
 
 class ChannelProcessor
@@ -31,6 +32,7 @@ private:
     NCO _carrNco; // Carrier NCO (Initial ~4.092 MHz)
     NCO _codeNco; // Code NCO (Initial ~1.023 MHz)
     G2INIT _m_sv;
+    size_t _samplesPerMs;
     // Loop Filter State from TrkBST.cpp
     float _carrFreqBasis;
     float _codeFreqBasis;
