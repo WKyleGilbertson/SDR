@@ -2,7 +2,6 @@
 #include <algorithm>
 #include <iostream>
 #include "PCSEngine.hpp"
-#include "G2INIT.h"
 
 extern "C"
 {
@@ -35,7 +34,9 @@ void PCSEngine::initPrn(int prn)
     if (codeFfts.find(prn) != codeFfts.end())
         return;
 
-    G2INIT sv(prn, 0);
+    // Store it in the map instead of just a local variable
+    m_sv_list.emplace(prn, G2INIT(prn, 0));
+    G2INIT &sv = m_sv_list[prn];
 
     // 1. Fill 1ms exactly (16368 samples)
     for (size_t idx = 0; idx < 16368; idx++)

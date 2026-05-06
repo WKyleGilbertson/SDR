@@ -11,5 +11,6 @@ class G2INIT {
     uint16_t cphase;
     int PRNGEN(uint8_t *CACODE, uint8_t PRN, uint16_t CODEPHASE);
     int DSPCODE(int8_t *CODE, uint8_t *CACODE);
+    G2INIT() : G2INIT(0, 0) {}
     G2INIT(uint8_t PRN, uint16_t CODEPHASE);
 };

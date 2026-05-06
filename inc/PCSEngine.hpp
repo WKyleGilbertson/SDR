@@ -5,6 +5,7 @@
 #include <complex>
 #include <map>
 #include <cstdint>
+#include "G2INIT.h"
 #include "NCO.h" // Must include this for m_nco member
 
 #undef kiss_fft_scalar
@@ -42,6 +43,7 @@ private:
     kiss_fft_cpx m_lastPeakComplex;
 
     std::map<int, std::vector<kiss_fft_cpx>> codeFfts;
+    std::map<int, G2INIT> m_sv_list;
 
     static inline void complex_mix(kiss_fft_cpx *out, const kiss_fft_cpx *a,
                                    const kiss_fft_cpx *b, size_t count, size_t shift)
@@ -59,6 +61,7 @@ public:
     PCSEngine(double sampleFreq);
     ~PCSEngine();
     void initPrn(int prn);
+    G2INIT getSV(int prn) { return m_sv_list.at(prn); }
     AcqResult search(int prn, const std::vector<kiss_fft_cpx> &rawData,
                      float centerFreq, int binRange, float binWidth,
                     uint32_t sampleTick = 0);

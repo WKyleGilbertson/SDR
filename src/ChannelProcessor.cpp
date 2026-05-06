@@ -9,17 +9,23 @@ inline float mapL1IF(uint8_t m, uint8_t s)
     return val;
 }
 
-ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init)
+ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, 
+    G2INIT sv)
     : _fs(fs_rate),
-      _nco(10, (float)fs_rate),    // Old NCO for PCS
-      _carrNco(5, (float)fs_rate), // New Tracking Carrier NCO
-      _codeNco(5, (float)fs_rate) // New Tracking Code NCO
+      _carrNco(10, (float)fs_rate), // New Tracking Carrier NCO
+      _codeNco(0, (float)fs_rate), // New Tracking Code NCO
+      _m_sv(sv)
 {
     _prn = init.prn;
-    _code_phase = init.codePhase; // Ensure this matches struct field name
     _doppler_hz = init.bin * 500.0f;
+    double initial_phase = init.codePhase;
+    uint32_t whole_chips = (uint32_t)std::floor(initial_phase);
+    double fractional_part = initial_phase - (double)whole_chips;
 
-    _nco.SetFrequency(4.092e6f + _doppler_hz); // Fixed to 4.092 MHz
+    _codeNco.rotations = whole_chips;
+    _codeNco.m_phase   = (uint32_t)(fractional_part * 4294967296.0);
+
+//    _nco.SetFrequency(4.092e6f + _doppler_hz); // Fixed to 4.092 MHz
     _carrFreqBasis = 4.092e6f;
     _codeFreqBasis = 1.023e6f;
 
@@ -27,15 +33,12 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init)
     _carrNco.SetFrequency(_carrFreqBasis + _doppler_hz);
     _codeNco.SetFrequency(_codeFreqBasis);
 
-    // G2INIT sv(_prn, 0);
-    G2INIT sv(_prn, (uint16_t)_code_phase);
-
-    _codeNco.LoadCACODE(sv.CACODE); // Use the 0/1 chips for NCO
+    _codeNco.LoadCACODE(_m_sv.CACODE); // Use the 0/1 chips for NCO
     _codeNco.RakeSpacing(CorrelatorSpacing::halfChip);
 
     _ca_replica.resize(1023);
     for (int i = 0; i < 1023; i++)
-        _ca_replica[i] = (int8_t)sv.CODE[i];
+        _ca_replica[i] = (int8_t)_m_sv.CODE[i];
 
     float Bn_carr = 25.0f;
     float zeta = 0.707f;

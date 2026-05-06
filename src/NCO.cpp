@@ -14,10 +14,10 @@ NCO::NCO(const int lgtblsize, const float m_sample_clk) {
     // m_mask is 1 for any bit used in the index, zero otherwise
     m_mask = m_len - 1;
     //m_table = new float[m_len];
-    //
-    printf("NCO Init: m_len = %d, this = %p\n", m_len, (void*)this);
-    if (this == nullptr) { printf("CRITICAL: this is null!\n"); }
-//
+
+/*    printf("NCO Init: m_len = %d, this = %p\n", m_len, (void*)this);
+    if (this == nullptr) { printf("CRITICAL: this is null!\n"); } */
+
     m_sintable = new float[m_len];
     m_costable = new float[m_len];
     for (auto k = 0; k < m_len; k++) {
@@ -84,30 +84,34 @@ void NCO::LoadCACODE(uint8_t *CODE) {
 }
 
 uint32_t NCO::clk(void) {
-//float NCO::operator()(void) {
     uint32_t index;
-    // Increment the phase by an amount dictated by our frequency
-    // m_phase was our PHI[n] value above
-    //if (m_phase + m_dphase < m_dphase) printf("Overflow");
-    if (m_phase + m_dphase < m_dphase) 
+
+    // 1. Advance Phase and check for Code Chip rollover
+    if (m_phase + m_dphase < m_phase) // Corrected overflow check
     {
         rotations++;
-        rotations %= 1023;
-        //EPLreg |= 0x01;
+        if (rotations >= 1023) rotations = 0; 
     }
-    EPLreg <<= 1;
-    EPLreg |= ((CACODE[rotations]) & 0x01);
-    Early  = (EPLreg & E_mask) == 1 ? 1 : -1;
-    Prompt = ((EPLreg & P_mask) >> shift) == 1 ? 1 : -1;
-    Late   = ((EPLreg & L_mask) >> 2*shift) == 1 ? 1 : -1;
 
-    m_phase += m_dphase; // PHI[n] = PHI[n-1] + (2^32 * f/fs)
-    // Grab the top m_lglen bits of this phase word
-    index = m_phase >> ((sizeof(uint32_t) * 8) - m_lglen);
-    // Insist that this index be found within 0... (m_len-1)
-    index &= m_mask;
-    idx = index;
-    // Finally return the table lookup value
+    // 2. Update the Shift Register with the current Gold Code chip
+    EPLreg <<= 1;
+    // Ensure we only pull the LSB (0 or 1) from the CACODE table
+    EPLreg |= (static_cast<uint64_t>(CACODE[rotations]) & 0x01ULL);
+
+    // 3. Extract Early, Prompt, and Late bits
+    // Use the non-zero check (!= 0) to avoid needing specific 'shift' logic
+    // This turns a "high" bit into 1 and a "low" bit into -1
+    Early  = ((EPLreg & E_mask) != 0) ? 1 : -1;
+    Prompt = ((EPLreg & P_mask) != 0) ? 1 : -1;
+    Late   = ((EPLreg & L_mask) != 0) ? 1 : -1;
+
+    // 4. Update phase accumulator for Carrier/Table lookup
+    m_phase += m_dphase;
+
+    // 5. Generate index for Sine/Cosine LUT
+    index = m_phase >> (32 - m_lglen);
+    idx = index & m_mask;
+
     return idx;
 }
 
