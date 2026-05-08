@@ -16,73 +16,38 @@ int main()
     versionInfo v;
     v.printVersion();
     RFE_Header_t meta = {};
-    std::vector<AcqResult> active_channels;
     std::vector<ChannelState> activeChannels;
-    // AcqResult target = {};
     auto system_start = std::chrono::steady_clock::now();
 
     try
     {
         ElasticReceiver rx;
-        // Connect to the UDP relay
         if (!rx.connect_to_relay("127.0.0.1", 12345))
             return -1;
 
-        // --- WAIT FOR FIRST PACKET ---
         std::cout << "[*] Waiting for stream telemetry..." << std::endl;
-
         std::vector<uint8_t> startup_buffer(8184);
 
         if (!rx.get_ms_blocks(startup_buffer.data(), meta, 1))
         {
-            std::cerr << "[!] No data received from relay. Check if it's running." << std::endl;
+            std::cerr << "[!] No data received from relay." << std::endl;
             return -1;
         }
-        printf("[*] Connected to Device: %s | FS: %u Hz | Last Tick: %u\n",
-               meta.dev_tag, meta.fs_rate, meta.sample_tick);
-        // -----------------------------
 
         PCSEngine pcs((float)meta.fs_rate);
         AcquisitionMgr acqMgr(pcs);
 
         bool acq_needed = true;
-
-        std::unique_ptr<ChannelProcessor> chan;
-        //        printf(" [NEW CHAN PTR: %p] ", (void *)chan.get());
-
-        // 10ms of data (8184 bytes per ms * 10)
-        // const size_t block_size = 8184 * 10;
         const size_t block_size = 327360;
         std::vector<uint8_t> block(block_size);
 
         auto start_wall = std::chrono::steady_clock::now();
-        double total_data_time = 0, session_time = 0;
+        double total_data_time = 0;
         bool first = true;
-
-        std::vector<double> lag_history;
-        auto last_display = std::chrono::steady_clock::now();
-
-        // Variables for Integrated Magnitude display
-        double accumulated_mag = 0;
-        int mag_count = 0;
-
-        std::cout << "[*] SDR Staging: Processing..." << std::endl;
-
-        if (first)
-        {
-            auto sync_end = std::chrono::steady_clock::now();
-            double sync_duration = std::chrono::duration<double>(sync_end - system_start).count();
-
-            std::cout << "[*] Total time to telemetry sync: " << sync_duration << "s" << std::endl;
-
-            start_wall = sync_end; // Existing lag logic
-            first = false;
-        }
 
         while (true)
         {
-            // Pull data from the ElasticReceiver's Ring Buffer
-            // if (rx.get_ms_blocks(block.data(), meta, 10))
+            // 1. Pull 5ms of data
             if (rx.get_ms_blocks(block.data(), meta, 5))
             {
                 if (first)
@@ -90,24 +55,13 @@ int main()
                     start_wall = std::chrono::steady_clock::now();
                     first = false;
                 }
+
+                // 2. ACQUISITION PHASE
                 if (acq_needed)
                 {
-                    auto start_acq = std::chrono::steady_clock::now();
-                    TimeTrio tme3 = rx.get_time_trio();
-                    std::string block_tag = get_iso8601_timestamp(tme3.unixSecond, tme3.msCount);
-                    fprintf(stdout, "[*] Current Buffer Insertion Time: %s\n",
-                            block_tag.c_str());
-                    TimeTrio acqTime = get_timeData(meta.unix_time, meta.sample_tick, meta.fs_rate);
-                    std::string acq_tag = get_iso8601_timestamp(acqTime.unixSecond, acqTime.msCount);
-                    fprintf(stdout, "[*] Block Time: %s Unix: %u, Tick: %u\n",
-                            acq_tag.c_str(), acqTime.unixSecond, meta.sample_tick);
-
-                    // 1. Run the acquisition
-                    // auto results = acqMgr.run(meta, block.data());
+                    printf("[*] Starting Acquisition on 5ms block...\n");
                     auto results = acqMgr.run(meta, block.data());
 
-                    auto end_acq = std::chrono::steady_clock::now();
-                    double acq_duration = std::chrono::duration<double>(end_acq - start_acq).count();
                     if (!results.empty())
                     {
                         activeChannels.clear();
@@ -117,89 +71,107 @@ int main()
                             state.prn = res.prn;
                             state.result = res;
                             state.sv = pcs.getSV(res.prn);
-                            state.processor = std::make_unique<ChannelProcessor>(
-                                (double)meta.fs_rate, state.result, state.sv);
-
+                            state.processor = std::make_unique<ChannelProcessor>((double)meta.fs_rate, state.result, state.sv);
                             activeChannels.push_back(std::move(state));
 
-                            printf("LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f\n",
+                            printf("  LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f\n",
                                    res.prn, res.snr, res.bin, res.codePhase);
                         }
-
                         printf("[*] HANDOVER SUCCESS: %zu channels initialized.\n", activeChannels.size());
                         acq_needed = false;
                         rx.jump_to_latest_epoch();
                         continue;
                     }
+                    else
+                    {
+                        printf("[!] No satellites found. Retrying...\n");
+                        continue;
+                    }
+                }
 
-                } // End acq_needed
-
+                // 3. TRACKING & DATA DECODING
                 if (!activeChannels.empty())
                 {
-                    // int focusPRN = 135; // Set target here
-                     int focusPRN = 131; // Set target here
-                    //int focusPRN = 29; // Set target here
+                    int focusPRN = 15; 
+
                     for (auto &state : activeChannels)
                     {
-                        // 1. Process EVERY channel so they stay locked
                         CorrRes res = state.processor->process(block.data(), block_size);
 
-                        // 2. ONLY run UI logic for the focus PRN
                         if (state.prn == focusPRN)
                         {
-                            std::string bits = "";
-                            for (int8_t s : res.symbols)
+                            for (int8_t bitSign : res.navBits)
                             {
-                                bits += (s > 0) ? "#" : "-";
-                            }
+                                uint8_t rawBit = (bitSign > 0) ? 1 : 0;
 
-                            double current_mag = std::sqrt(res.Pi * res.Pi + res.Pq * res.Pq);
-                            accumulated_mag += current_mag;
-                            mag_count++;
-                            lag_history.push_back((res.code_phase - state.handoverPhase) / 1023000.0);
+                                // --- PREAMBLE SEARCH ---
+                                state.navShiftReg = (state.navShiftReg << 1) | rawBit;
+                                uint8_t pattern = (uint8_t)(state.navShiftReg & 0xFF);
 
-                            auto now = std::chrono::steady_clock::now();
-                            if (std::chrono::duration<double>(now - last_display).count() >= 0.2)
-                            {
-                                double avg_drift = lag_history.empty() ? 0.0 : std::accumulate(lag_history.begin(), lag_history.end(), 0.0) / lag_history.size();
+                                if (!state.frameSync && (pattern == 0x8B || pattern == 0x74)) 
+                                {
+                                    state.frameSync = true;
+                                    state.inverted = (pattern == 0x74);
+                                    state.subframeBitIdx = 0; 
+                                    state.lastBitOfPrevWord = 0; 
 
-                                // printf("\r[TRK] PRN %3d |Code: %8.3f | I: %6.0f | Q: %6.0f | Mag: %5.0f | D: %3.1es",
-                                //        state.prn, res.code_phase, res.Pi, res.Pq, accumulated_mag, avg_drift);
-                                //  Updated Printf to show the bit pattern at the end
-                                printf("\r[TRK] PRN %3d |Code: %8.3f | I: %6.0f | Q: %6.0f | D: %3.1es | Bits: %s",
-                                       state.prn, res.code_phase, res.Pi, res.Pq, avg_drift, bits.c_str());
+                                    printf("\n[>>>] SYNC: %02X | Inverted: %s\n", pattern, state.inverted ? "YES" : "NO");
+
+                                    // Manually push the 8 bits of the preamble
+                                    uint8_t preamble = 0x8B; 
+                                    for(int i=7; i>=0; i--) {
+                                        uint8_t b = (preamble >> i) & 1;
+                                        printf("%c", (b == 1) ? '#' : '-');
+                                        state.subframeBitIdx++;
+                                    }
+                                    // Use 'continue' to skip the printing block for THIS bit,
+                                    // as we just manually handled the first 8 bits of the word.
+                                    continue; 
+                                }
+
+                                // --- DATA PRINTING ---
+                                if (state.frameSync) 
+                                {
+                                    uint8_t correctedBit = state.inverted ? (rawBit ^ 1) : rawBit;
+                                    uint8_t unmaskedBit = (state.subframeBitIdx < 24 && state.lastBitOfPrevWord == 1) 
+                                                          ? (correctedBit ^ 1) 
+                                                          : correctedBit;
+
+                                    printf("%c", (unmaskedBit == 1) ? '#' : '-');
+                                    state.subframeBitIdx++;
+
+                                    if (state.subframeBitIdx % 30 == 0) {
+                                        state.lastBitOfPrevWord = correctedBit; 
+                                        printf(" [W%d] ", state.subframeBitIdx / 30);
+                                    }
+
+                                    if (state.subframeBitIdx >= 300) {
+                                        state.subframeBitIdx = 0;
+                                        state.frameSync = false; 
+                                        printf("\n[END] SUBFRAME -> ");
+                                    }
+                                }
                                 fflush(stdout);
-
-                                last_display = now;
-                                accumulated_mag = 0;
-                                mag_count = 0;
-                                if (lag_history.size() > 50)
-                                    lag_history.clear();
-                            }
-                        }
-                    }
-
-                    // ... rest of throttling logic ...
-                    // Update time tracking (only once per 10ms block, not per channel!)
-                    total_data_time += 0.010;
-                    session_time += 0.010;
-
-                    // Latency and Throttling logic remains here...
-                    auto now = std::chrono::steady_clock::now();
-                    double elapsed = std::chrono::duration<double>(now - start_wall).count();
-                    double lag = total_data_time - elapsed;
-                    // ... (keep your existing lag/sleep logic) ...
+                            } // end bit loop
+                        } // end focus check
+                    } // end channel loop
+                    total_data_time += 0.005;
                 }
-            } // end if (rx.get_samples)
+            }
             else
             {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                std::this_thread::sleep_for(std::chrono::microseconds(500));
             }
-        } // end while (true)
+        } // end while true
     } // end try
+    catch (const std::exception &e)
+    {
+        std::cerr << "\n[!] Exception: " << e.what() << std::endl;
+    }
     catch (...)
     {
-        std::cerr << "\n[!] Error in SDR_test loop." << std::endl;
+        std::cerr << "\n[!] Unknown Error in SDR_test loop." << std::endl;
     }
+
     return 0;
-} // end main
+}

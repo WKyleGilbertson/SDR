@@ -2,7 +2,6 @@
 // https://zipcpu.com/dsp/2017/12/09/nco.html
 
 #include "NCO.h"
-#include <cstdio>
 
 NCO::NCO(const int lgtblsize, const float m_sample_clk) {
     SAMPLE_RATE = m_sample_clk;
@@ -50,29 +49,30 @@ void NCO::SetFrequency(float f) {
 }
 
 void NCO::RakeSpacing(CorrelatorSpacing cs) {
-  switch (cs) {
-   case CorrelatorSpacing::Narrow:
-//    printf("Narrow\n");
-    E_mask = 0x0000000000000001;
-    P_mask = 0x0000000000000008; // 3
-    L_mask = 0x0000000000000040; // 6
-    shift  = 3;
-    break;
-   case CorrelatorSpacing::halfChip:
-//    printf("Normal\n");
-/*    E_mask = 0x0000000000000001;
-    P_mask = 0x0000000000080000;// 19
-    L_mask = 0x0000004000000000;// 38
-    shift  = 19; */
-    E_mask = 0x0000000000000001;
-    P_mask = 0x0000000000000100;// 8
-    L_mask = 0x0000000000010000;// 16
-    shift  = 8;
-    break;
-   default:
-//    printf("No Value %d\n", cs);
-      break;
-  }  
+    // 1. Calculate samples per chip based on stored sample clock
+    // C/A chip rate is 1.023 MHz
+    float samplesPerChip = m_sample_clk / 1023000.0f;
+
+    // 2. Anchor Prompt at Bit 32 (The center of the 64-bit register)
+    P_mask = 1ULL << 32;
+
+    if (cs == CorrelatorSpacing::halfChip) {
+        // 0.5 chip spacing
+        shift = (uint8_t)std::round(samplesPerChip * 0.5f);
+    } 
+    else if (cs == CorrelatorSpacing::Narrow) {
+        // 0.1 chip spacing (min 1 sample)
+        shift = (uint8_t)std::max(1, (int)std::round(samplesPerChip * 0.1f));
+    }
+
+    E_mask = 1ULL << (32 - shift); // "Earlier" in time (entered more recently)
+    L_mask = 1ULL << (32 + shift); // "Later" in time (shifted further away)
+
+    // 3. Noise Masks (2.0 chips away)
+    // At 16.368MHz, this is exactly 32 samples (Bit 0 and Bit 64)
+    int noiseOffset = (int)std::round(samplesPerChip * 2.0f);
+    SE_mask = 1ULL << (std::max(0, 32 - noiseOffset));
+    SL_mask = 1ULL << (std::min(63, 32 + noiseOffset));
 }
 
 //void NCO::LoadCACODE(int8_t *CODE) {
@@ -105,6 +105,7 @@ uint32_t NCO::clk(void) {
     Prompt = ((EPLreg & P_mask) != 0) ? 1 : -1;
     Late   = ((EPLreg & L_mask) != 0) ? 1 : -1;
 
+    superEarly = ((EPLreg & SE_mask) != 0) ? 1 : -1;
     // 4. Update phase accumulator for Carrier/Table lookup
     m_phase += m_dphase;
 

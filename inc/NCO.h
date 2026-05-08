@@ -4,6 +4,8 @@
 #pragma once
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <algorithm>
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
@@ -19,6 +21,7 @@ public:
     uint16_t rotations;
     uint64_t EPLreg;
     int8_t Early, Prompt, Late;
+    int8_t superEarly, superLate;
     int8_t CACODE[1023];
     float * m_table;
     NCO(const int lgtblsize, const float m_sample_clk);
@@ -32,6 +35,7 @@ public:
     float sine(int32_t idx);
 private:
     uint64_t E_mask, P_mask, L_mask;
+    uint64_t SE_mask,SL_mask;
     uint8_t shift;
 
 };

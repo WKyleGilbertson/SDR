@@ -13,6 +13,14 @@ struct CorrRes
     double Pq;
     double code_phase;
     std::vector<int8_t> symbols; // hold the sign of acc_Pi for each ms
+    std::vector<int8_t> navBits; 
+};
+
+struct BitSync {
+    int8_t buffer[20];      // Sliding window of 1ms symbols
+    int count = 0;          // How many symbols we've seen
+    int bestOffset = -1;    // The found bit-start (0-19)
+    int histograms[20];     // Tracks sign-changes at each offset
 };
 
 class ChannelProcessor
@@ -40,11 +48,17 @@ private:
     float _oldCarrError = 0.0f, _oldCarrNco = 0.0f;
     // Filter Coefficients
     float _tau1Carr, _tau2Carr, _tau1Code, _tau2Code;
+    float _carrLoopInt = 0.0f, _codeLoopInt = 0.0;
     double _fs;
     int _prn;
     double _doppler_hz;
     double _code_phase;
+    int _rolloverDelayCounter = -1;
     std::vector<int8_t> _ca_replica;
+    BitSync _sync = {}; // Initialize to zero
+    int8_t _lastSymbol = 0; // To detect sign flips
+    float _bitAccI = 0.0f;     // For the 20 ms coherent integration
+    float _bitAccQ = 0.0f;     // For the 20 ms cohereent integration
 };
 
 struct ChannelState {
@@ -54,6 +68,20 @@ struct ChannelState {
     std::unique_ptr<ChannelProcessor> processor; // The active tracker
     double handoverPhase = 0.0;
     bool isSynchronized = false;
+    uint32_t navShiftReg = 0; // Store last 32 bits for preamble
+    bool frameSync = false;  // Flips to true when 0x8B is found
+    int bitsSinceLastPreamble = 0;
+    bool confirmedFrameSync = false;
+    int bitCounter = 0;  // Counts bits since last PREAMBLE
+    int subframeBitIdx = -1;  // Index within the 300-bit subframe (0-299)
+    int bitBufferCount = 0;
+    double bitIntegrationI = 0.0;
+    int bitOffset = -1; // -1 means we haven't found the sync yet
+    int msInSubframe = 0;
+    int lastBitOfPrevWord = 0;
+    int bitSinceLastPreamble = 0;
+    std::vector<uint8_t> subframeBuffer; // holds the 300 bits
+    bool inverted = false;
     bool isActive() const {return processor != nullptr;}
     ChannelState() : prn(0), sv(0, 0) {}
 };
