@@ -59,7 +59,7 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
     resetAccumulators(_acc);
     _snr = -999.0f;
     _isLocked = false;
-    _rolloverDelayCounter = -1;
+//    _rolloverDelayCounter = -1;
     _sync.count = 0;
     _sync.bestOffset = -1;
     _bitAccI = 0.0f;
@@ -81,6 +81,10 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
     float spc = (float)_fs / 1023000.0f;
     int chipTravelDelay = (int)std::round(32.0f / spc);
 
+    // Call the new pipeline pre-loader to fill EPLreg completely
+    _codeNco.InitializeEPLPipeline(init.codePhase, chipTravelDelay);
+
+    /*
     double initial_phase = init.codePhase;
 
     // Add the delay to the rotations so the signal peak is at the Prompt bit
@@ -89,6 +93,7 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
 
     _codeNco.rotations = whole_chips % 1023; // wrap at 1 ms boundary
     _codeNco.m_phase = (uint32_t)(fractional_part * 4294967296.0);
+*/
 
     //    _nco.SetFrequency(4.092e6f + _doppler_hz); // Fixed to 4.092 MHz
     _carrFreqBasis = 4.092e6f;
@@ -133,15 +138,11 @@ CorrRes ChannelProcessor::process(const uint8_t *data, size_t count)
         {
             const ComplexSample &samp = (s == 0) ? entry.s0 : entry.s1;
 
-            uint32_t oldRot = _codeNco.rotations;
-            uint32_t carrIdx = _carrNco.clk();
-            _codeNco.clk();
-            uint32_t newRot = _codeNco.rotations;
-
-            if (newRot < oldRot)
-            {
-                _rolloverDelayCounter = 32;
-            }
+            uint32_t packeCarrResult = _carrNco.clk();
+            uint32_t carrIdx = packeCarrResult & _carrNco.m_mask;
+            
+            uint32_t packedCodeResult = _codeNco.clk();
+            bool isEpochRollover = (packedCodeResult & 0x80000000) !=0;
 
             int32_t bb_i = samp.i * _carrNco.cosine(carrIdx);
             int32_t bb_q = samp.q * _carrNco.sine(carrIdx);
@@ -157,18 +158,15 @@ CorrRes ChannelProcessor::process(const uint8_t *data, size_t count)
             _acc.SLi += (bb_i * _codeNco.superLate);
             _acc.SLq -= (bb_q * _codeNco.superLate);
 
-            // if (_rolloverDelayCounter == 0)
-            if (_rolloverDelayCounter > 0)
-            {
-                _rolloverDelayCounter--;
-                if (_rolloverDelayCounter == 0)
-                {
+                if (isEpochRollover) {
                     // ... [Keep your Carrier/Code loop filter logic here] ...
                     float T = 0.001f;
                     float carrError = 0.0f;
                     float codeError = 0.0f;
                     float I = (float) _acc.Pi;
                     float Q = (float) _acc.Pq;
+                    float E = 0.0f;
+                    float L = 0.0f;
 
                     if (std::abs(I) >= 1e-6f)
                     {
@@ -185,21 +183,22 @@ CorrRes ChannelProcessor::process(const uint8_t *data, size_t count)
                     _oldCarrNco = carrNcoUpdate;
                     _oldCarrError = carrError;
 
-                    float finalFreq = ((_carrFreqBasis + _doppler_hz) - carrNcoUpdate);
+                    float finalFreq = ((_carrFreqBasis + _doppler_hz) + carrNcoUpdate);
                     _carrNco.SetFrequency(finalFreq);
                     _currentCommandedFreq = finalFreq;
 
                     // --- 2. CODE LOOP (DLL - Delay Locked Loop) ---
                     // Use the "Normalized Early-Minus-Late" discriminator
-                    float E = sqrtf(float(_acc.Ei * _acc.Ei + _acc.Eq * _acc.Eq));
-                    float L = sqrtf(float(_acc.Li * _acc.Li + _acc.Lq * _acc.Lq));
+                    E = sqrtf((float)(_acc.Ei * _acc.Ei + _acc.Eq * _acc.Eq));
+                    L = sqrtf((float)(_acc.Li * _acc.Li + _acc.Lq * _acc.Lq));
                     if ((E + L) > 0.0f) {
                     codeError = (E - L) / (E + L);
                     }
 
+
                     // If E and L are basically zero, don't update (avoid divide by zero)
-                    if (std::isnan(codeError))
-                        codeError = 0;
+                    //if (std::isnan(codeError))
+                    //    codeError = 0;
 
                     float codeNcoUpdate = _oldCodeNco +
                                           (_codeLF.tau2 / _codeLF.tau1) * (codeError - _oldCodeError) +
@@ -207,11 +206,11 @@ CorrRes ChannelProcessor::process(const uint8_t *data, size_t count)
                     _oldCodeNco = codeNcoUpdate;
                     _oldCodeError = codeError;
 
-                    // Adjust the Code NCO (1.023 MHz basis + the loop correction)
                     float activeDoppler = finalFreq - _carrFreqBasis;
-                    float aiding = activeDoppler / 1540.0f;
-
-                    _codeNco.SetFrequency(_codeFreqBasis + aiding);
+                    float aiding = (_prn < 100) ? (activeDoppler / 1540.0f) : 0.0f;
+                    // Adjust the Code NCO (1.023 MHz basis + the loop correction)
+                    _codeNco.SetFrequency(_codeFreqBasis + codeNcoUpdate + aiding);
+                    //_codeNco.SetFrequency(_codeFreqBasis + codeNcoUpdate );
                     //  -- 1 ms EPOCH HANDOVER
                     // --- TRACKING TELEMETRY
                     calculateSNR(_acc, _snr);
@@ -224,7 +223,6 @@ CorrRes ChannelProcessor::process(const uint8_t *data, size_t count)
                     // --- Accumulator RESET ---
                     resetAccumulators(_acc);
                 }
-            }
         }
     }
 

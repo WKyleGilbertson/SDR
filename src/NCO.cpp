@@ -85,6 +85,43 @@ void NCO::LoadCACODE(uint8_t *CODE) {
 
 uint32_t NCO::clk(void) {
     uint32_t index;
+    uint32_t rolloverFlag = 0x00000000; // Default: No rollover
+
+    // 1. Advance Phase and check for Code Chip rollover
+    if (m_phase + m_dphase < m_phase) 
+    {
+        rotations++;
+        if (rotations >= 1023) {
+            rotations = 0;
+            rolloverFlag = 0x80000000; // Set top bit high to indicate a 1ms epoch wrap!
+        }
+    }
+
+    // 2. Update the Shift Register with current Gold Code chip
+    EPLreg <<= 1;
+    EPLreg |= (static_cast<uint64_t>(CACODE[rotations]) & 0x01ULL);
+
+    // 3. Extract Correlator Pipeline Masks
+    Early      = ((EPLreg & E_mask) != 0) ? 1 : -1;
+    Prompt     = ((EPLreg & P_mask) != 0) ? 1 : -1;
+    Late       = ((EPLreg & L_mask) != 0) ? 1 : -1;
+    superEarly = ((EPLreg & SE_mask) != 0) ? 1 : -1;
+    superLate  = ((EPLreg & SL_mask) != 0) ? 1 : -1; // Assigned and working
+
+    // 4. Update phase accumulator for Carrier/Table lookup
+    m_phase += m_dphase;
+
+    // 5. Generate index for Sine/Cosine LUT
+    index = m_phase >> (32 - m_lglen);
+    idx = index & m_mask;
+
+    // Bitwise OR the look-up index with our top-bit rollover status flag
+    return (idx | rolloverFlag); 
+}
+
+/*
+uint32_t NCO::clk(void) {
+    uint32_t index;
 
     // 1. Advance Phase and check for Code Chip rollover
     if (m_phase + m_dphase < m_phase) // Corrected overflow check
@@ -106,6 +143,7 @@ uint32_t NCO::clk(void) {
     Late   = ((EPLreg & L_mask) != 0) ? 1 : -1;
 
     superEarly = ((EPLreg & SE_mask) != 0) ? 1 : -1;
+    superLate = ((EPLreg & SL_mask) != 0) ? 1 : -1;
     // 4. Update phase accumulator for Carrier/Table lookup
     m_phase += m_dphase;
 
@@ -114,7 +152,7 @@ uint32_t NCO::clk(void) {
     idx = index & m_mask;
 
     return idx;
-}
+} */
 
 float NCO::cosine(int32_t idx) {
     return m_costable[idx];
@@ -122,4 +160,29 @@ float NCO::cosine(int32_t idx) {
 
 float NCO::sine(int32_t idx) {
    return m_sintable[idx]; 
+}
+
+void NCO::InitializeEPLPipeline(double initialCodePhase, int chipTravelDelay) {
+    // Clear out any old history in the shift register
+    EPLreg = 0ULL;
+
+    // Calculate the target rotation chip tracking index at handover
+    uint32_t base_rotation = (uint32_t)std::floor(initialCodePhase);
+    double fractional_part = initialCodePhase - std::floor(initialCodePhase);
+
+    // Set the phase register precisely to match the fractional remainder
+    m_phase = (uint32_t)(fractional_part * 4294967296.0);
+    rotations = (base_rotation + chipTravelDelay) % 1023;
+
+    // Pre-fill the 64-bit shift register looking backwards in time
+    // So that the target chip sits exactly at the Prompt mask (Bit 32)
+    for (int i = 0; i < 64; ++i) {
+        // Calculate historical chip positions wrapping at the 1023 C/A boundary
+        int historical_offset = (int)rotations - 32 + i;
+        while (historical_offset < 0) historical_offset += 1023;
+        uint32_t chip_idx = (uint32_t)(historical_offset) % 1023;
+
+        // Shift the bit into place inside the register pipeline
+        EPLreg |= (static_cast<uint64_t>(CACODE[chip_idx]) & 0x01ULL) << i;
+    }
 }

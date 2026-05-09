@@ -33,6 +33,7 @@ public:
     uint32_t clk(void);
     float cosine(int32_t idx);
     float sine(int32_t idx);
+    void NCO::InitializeEPLPipeline(double initialCodePhase, int chipTravelDelay);
 private:
     uint64_t E_mask, P_mask, L_mask;
     uint64_t SE_mask,SL_mask;
