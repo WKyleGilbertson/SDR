@@ -128,7 +128,7 @@ int main(int argc, char *argv[])
                         // 3. Telemetry (Optional: only print for your focus PRN)
                         if (state.prn == focusPRN)
                         {
-                            printf("[PRN %3d] SNR: %5.1f | dF: %7.1f Hz | Phase: %7.2f | \n  ",
+                            printf("[PRN %3d] SNR: %5.1f | dF: %7.1f Hz | Phase: %7.2f | \r  ",
                                    state.processor->getPRN() , res.snr, res.dopplerHZ, res.code_phase);
                             /*
                             printf("[PRN %3d] SNR: %4.1f dB | Locked: %s | NavBits: %zu\n",

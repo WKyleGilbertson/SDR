@@ -69,7 +69,6 @@ private:
     Accumulators _acc;
     void resetAccumulators(Accumulators & acc); 
     void ChannelProcessor::calculateSNR(Accumulators & acc, double & snr);
-//    int _rolloverDelayCounter = -1;
     // Filter Coefficients
     LoopFilter _codeLF, _carrLF;
     double _fs;
