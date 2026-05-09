@@ -4,7 +4,7 @@
 #include <vector>
 #include "NCO.h"
 #include "g2init.h"
-#include "L1IFUtil.hpp"  // Has the bit unpacking
+#include "L1IFUtil.hpp" // Has the bit unpacking
 #include "NavDecoder.h"
 #include "PCSEngine.hpp" // This defines AcqResult
 
@@ -15,10 +15,11 @@ struct CorrRes
     double code_phase;
     double dopplerHZ;
     double snr;
-    std::vector<int8_t> symbols; 
+    std::vector<int8_t> symbols;
 };
 
-struct ChannelTelemetry {
+struct ChannelTelemetry
+{
     int prn;
     double snr;
     double dopplerHz;
@@ -26,7 +27,8 @@ struct ChannelTelemetry {
     bool isLocked;
 };
 
-struct LoopFilter {
+struct LoopFilter
+{
     float tau1;
     float tau2;
     float gain;
@@ -35,7 +37,8 @@ struct LoopFilter {
     float omega_n;
 };
 
-struct Accumulators {
+struct Accumulators
+{
     int32_t Ei, Eq, Pi, Pq, Li, Lq, SEi, SEq, SLi, SLq;
 };
 
@@ -44,15 +47,16 @@ class ChannelProcessor
 public:
     // Default constructor so 'chan' can exist before acquisition
     ChannelProcessor() : _fs(16368000.0), _carrNco(10, 16368000.0f),
-        _codeNco(0, 16368000.0f), _code_phase(0), _m_sv(0, 0) {}
+                         _codeNco(0, 16368000.0f), _code_phase(0), _m_sv(0, 0) {}
     // The real constructor we use after lock
     ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT sv);
     CorrRes process(const uint8_t *data, size_t count);
-    int getPRN() const {return _prn;}
-    bool isLocked() const {return _isLocked;}
-    float getSNR() const {return (float)_snr;}
-    ChannelTelemetry getTelemetry() const {
-        return {_prn, _snr, _doppler_hz, _code_phase, _isLocked };
+    int getPRN() const { return _prn; }
+    bool isLocked() const { return _isLocked; }
+    float getSNR() const { return (float)_snr; }
+    ChannelTelemetry getTelemetry() const
+    {
+        return {_prn, _snr, _doppler_hz, _code_phase, _isLocked};
     }
 
 private:
@@ -67,8 +71,8 @@ private:
     float _oldCarrError = 0.0f, _oldCarrNco = 0.0f;
     float _currentCommandedFreq = 0.0f;
     Accumulators _acc;
-    void resetAccumulators(Accumulators & acc); 
-    void ChannelProcessor::calculateSNR(Accumulators & acc, double & snr);
+    void resetAccumulators(Accumulators &acc);
+    void ChannelProcessor::calculateSNR(Accumulators &acc, double &snr);
     // Filter Coefficients
     LoopFilter _codeLF, _carrLF;
     double _fs;
@@ -81,33 +85,35 @@ private:
     float _snrBufferQ[20]; // 20 ms tracking window
     int _snrBufferIndex = 0;
     std::vector<int8_t> _ca_replica;
-    BitSync _sync = {}; // Initialize to zero
+    BitSync _sync = {};     // Initialize to zero
     int8_t _lastSymbol = 0; // To detect sign flips
-    float _bitAccI = 0.0f;     // For the 20 ms coherent integration
-    float _bitAccQ = 0.0f;     // For the 20 ms cohereent integration
+    float _bitAccI = 0.0f;  // For the 20 ms coherent integration
+    float _bitAccQ = 0.0f;  // For the 20 ms cohereent integration
 };
 
 class NavDecoder;
-struct ChannelState {
+struct ChannelState
+{
     int prn;
-    AcqResult result;   // Metadata from PCS (PRN, CodePhase, Bin)
-    G2INIT    sv;       // The Gold Code replica (bits)
+    AcqResult result;                            // Metadata from PCS (PRN, CodePhase, Bin)
+    G2INIT sv;                                   // The Gold Code replica (bits)
     std::unique_ptr<ChannelProcessor> processor; // The active tracker
     std::unique_ptr<NavDecoder> decoder;
 
-    bool isActive() const {return processor != nullptr;}
+    bool isActive() const { return processor != nullptr; }
 
-    ChannelState(int p, double fs, const AcqResult& res, G2INIT s) 
-        : prn(p), result(res), sv(s) {
+    ChannelState(int p, double fs, const AcqResult &res, G2INIT s)
+        : prn(p), result(res), sv(s)
+    {
         processor = std::make_unique<ChannelProcessor>(fs, result, s);
         decoder = std::make_unique<NavDecoder>(p);
     }
 
-  // Since unique_ptr can't be copied, we need to allow the vector to MOVE it
-    ChannelState(ChannelState&&) noexcept = default;
-    ChannelState& operator=(ChannelState&&) noexcept = default;
-    
+    // Since unique_ptr can't be copied, we need to allow the vector to MOVE it
+    ChannelState(ChannelState &&) noexcept = default;
+    ChannelState &operator=(ChannelState &&) noexcept = default;
+
     // Delete the default copy constructor
-    ChannelState(const ChannelState&) = delete;
-    ChannelState& operator=(const ChannelState&) = delete;  
+    ChannelState(const ChannelState &) = delete;
+    ChannelState &operator=(const ChannelState &) = delete;
 };
