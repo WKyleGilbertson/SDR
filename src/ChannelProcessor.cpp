@@ -29,18 +29,18 @@ void ChannelProcessor::calculateSNR(Accumulators &acc, double &snr)
     // Average noise power across Early and Late correlators
     float noisePwr = float((acc.SEi * acc.SEi + acc.SEq * acc.SEq +
                             acc.SLi * acc.SLi + acc.SLq * acc.SLq)) / 4.0f;
-
     if (noisePwr > 0 && pPwr > 0) // Ensure both are positive
     {
         float instantSNR = 10.0f * log10(pPwr / noisePwr);
+
+        if (snr == -999.0f) {
+            snr = instantSNR;
+        } else {
+            snr = (0.9 * snr) + (0.1f * instantSNR);
+        }
+    } else if (pPwr <= 0 && noisePwr > 0) {
+            snr = (snr == -999.0f) ? -20.0f : (0.8f * snr) + (0.1f * -20.0f); 
         
-        // This IIR filter is what causes the 6.0dB "stickiness" if snr isn't reset!
-        snr = (0.5f * snr) + (0.5f * instantSNR); 
-    }
-    else if (pPwr <= 0 && noisePwr > 0)
-    {
-        // Signal lost, drive SNR toward a low floor instead of -inf
-        snr = (0.5f * snr) + (0.5f * -20.0f); 
     }
 }
 
@@ -57,7 +57,7 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
         _sync.histograms[i] = 0;
     }
     resetAccumulators(_acc);
-    _snr = 0.0f;
+    _snr = -999.0f;
     _isLocked = false;
     _rolloverDelayCounter = -1;
     _sync.count = 0;
@@ -73,7 +73,7 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
 
     // Rake Initialization
     _codeNco.LoadCACODE(_m_sv.CACODE); // Use the 0/1 chips for NCO
-                                       //    _codeNco.RakeSpacing(CorrelatorSpacing::Narrow);
+//    _codeNco.RakeSpacing(CorrelatorSpacing::Narrow);
     _codeNco.RakeSpacing(CorrelatorSpacing::halfChip);
 
     // Handover Logic: How many chips are "in flight" inside 64-bit register
@@ -102,7 +102,7 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
     for (int i = 0; i < 1023; i++)
         _ca_replica[i] = (int8_t)_m_sv.CODE[i];
 
-    _carrLF.Bn = 15.0f;
+    _carrLF.Bn = 25.0f;
     _carrLF.zeta = 0.707f;
     _carrLF.gain = 1.0f;
     _carrLF.omega_n = _carrLF.Bn * 8.0f * _carrLF.zeta /
@@ -166,40 +166,36 @@ CorrRes ChannelProcessor::process(const uint8_t *data, size_t count)
                     // ... [Keep your Carrier/Code loop filter logic here] ...
                     float T = 0.001f;
                     float carrError = 0.0f;
-                    // float carrError = atan2f(acc_Pq, acc_Pi) / (2.0f * (float)M_PI);
-                    if (std::abs(_acc.Pi) != 0)
+                    float codeError = 0.0f;
+                    float I = (float) _acc.Pi;
+                    float Q = (float) _acc.Pq;
+
+                    if (std::abs(I) >= 1e-6f)
                     {
-                        carrError = atanf(float(_acc.Pq / _acc.Pi)) / (2.0f * (float)M_PI);
+                        carrError = atanf(Q/I);
                     }
                     else
                     {
-                        carrError = (_acc.Pq >= 0 ? 0.25f : -0.25f);
+                        carrError = (Q >= 0.0f) ? 1.570796f : -1.570796f;
                     }
-                    if (carrError > 1.570796f)
-                        carrError -= (float)M_PI;
-                    else if (carrError < 1.570796f)
-                        carrError += (float)M_PI;
+
                     float carrNcoUpdate = _oldCarrNco +
                                           (_carrLF.tau2 / _carrLF.tau1) * (carrError - _oldCarrError) +
                                           (carrError * (T / _carrLF.tau1));
-                    float spoof = carrError * 0.5;
-                    //carrError = spoof;
                     _oldCarrNco = carrNcoUpdate;
                     _oldCarrError = carrError;
 
                     float finalFreq = ((_carrFreqBasis + _doppler_hz) - carrNcoUpdate);
                     _carrNco.SetFrequency(finalFreq);
                     _currentCommandedFreq = finalFreq;
-                    _carrNco.SetFrequency((_carrFreqBasis + _doppler_hz) - carrNcoUpdate);
-
-                    float carrierDrift = (_doppler_hz - carrNcoUpdate);
-                    float aiding = carrierDrift / 1540.0f;
 
                     // --- 2. CODE LOOP (DLL - Delay Locked Loop) ---
                     // Use the "Normalized Early-Minus-Late" discriminator
                     float E = sqrtf(float(_acc.Ei * _acc.Ei + _acc.Eq * _acc.Eq));
                     float L = sqrtf(float(_acc.Li * _acc.Li + _acc.Lq * _acc.Lq));
-                    float codeError = (E - L) / (E + L);
+                    if ((E + L) > 0.0f) {
+                    codeError = (E - L) / (E + L);
+                    }
 
                     // If E and L are basically zero, don't update (avoid divide by zero)
                     if (std::isnan(codeError))
@@ -212,6 +208,9 @@ CorrRes ChannelProcessor::process(const uint8_t *data, size_t count)
                     _oldCodeError = codeError;
 
                     // Adjust the Code NCO (1.023 MHz basis + the loop correction)
+                    float activeDoppler = finalFreq - _carrFreqBasis;
+                    float aiding = activeDoppler / 1540.0f;
+
                     _codeNco.SetFrequency(_codeFreqBasis + aiding);
                     //  -- 1 ms EPOCH HANDOVER
                     // --- TRACKING TELEMETRY
@@ -231,7 +230,7 @@ CorrRes ChannelProcessor::process(const uint8_t *data, size_t count)
 
     double finePhase = (double)_codeNco.m_phase / 4294967296.0;
     _code_phase = (double)_codeNco.rotations + finePhase;
-    _doppler_hz = _carrFreqBasis -_currentCommandedFreq;
+    float dF = _currentCommandedFreq - _carrFreqBasis;
 
-    return {(double)block_Pi, (double)block_Pq, _code_phase, _doppler_hz, _snr, symbols};
+    return {(double)block_Pi, (double)block_Pq, _code_phase, dF, _snr, symbols};
 }
