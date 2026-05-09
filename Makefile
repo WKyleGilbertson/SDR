@@ -46,6 +46,7 @@ SDR_OBJS = $(ODIR)/sdr.obj \
            $(ODIR)/L1IFUtil.obj \
            $(ODIR)/NCO.obj \
            $(ODIR)/ChannelProcessor.obj \
+           $(ODIR)/NavDecoder.obj \
            $(ODIR)/g2init.obj \
            $(ODIR)/PCSEngine.obj \
            $(ODIR)/kiss_fft.obj
