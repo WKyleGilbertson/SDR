@@ -23,26 +23,62 @@ void ChannelProcessor::resetAccumulators(Accumulators &acc)
     acc.SLq = 0;
 }
 
-void ChannelProcessor::calculateSNR(Accumulators &acc, double &snr)
-{
-    float pPwr = (float(acc.Pi * acc.Pi + acc.Pq * acc.Pq));
-    // Average noise power across Early and Late correlators
-    float noisePwr = float((acc.SEi * acc.SEi + acc.SEq * acc.SEq +
-                            acc.SLi * acc.SLi + acc.SLq * acc.SLq)) / 4.0f;
-    if (noisePwr > 0 && pPwr > 0) // Ensure both are positive
-    {
-        float instantSNR = 10.0f * log10(pPwr / noisePwr);
+void ChannelProcessor::calculateSNR(Accumulators &acc, double &snr) {
+    _snrBufferI[_snrBufferIndex] = (float)acc.Pi;
+    _snrBufferQ[_snrBufferIndex] = (float)acc.Pq;
+    _snrBufferIndex = (_snrBufferIndex + 1) % 20;
 
-        if (snr == -999.0f) {
-            snr = instantSNR;
+    float wideBandPower = 0.0f;
+    for (int i = 0; i < 20; ++i) {
+        wideBandPower += (_snrBufferI[i] * _snrBufferI[i] + _snrBufferQ[i] * _snrBufferQ[i]);
+    }
+    wideBandPower /= 20.0f;
+
+    float absoluteMagnitudeSum = 0.0f;
+    for (int i = 0; i < 20; ++i) {
+        absoluteMagnitudeSum += sqrtf(_snrBufferI[i] * _snrBufferI[i] + _snrBufferQ[i] * _snrBufferQ[i]);
+    }
+    float coherentPowerEstimate = (absoluteMagnitudeSum / 20.0f);
+    float coherentPower = coherentPowerEstimate * coherentPowerEstimate;
+
+    if (wideBandPower > coherentPower && coherentPower > 0.0f) {
+        float noiseEstimate = wideBandPower - coherentPower;
+        float calculatedMetric = 10.0f * log10f(coherentPower / noiseEstimate);
+
+        if (snr <= 0.0f || snr == -5.0f || snr == 3.0f) {
+            snr = calculatedMetric;
         } else {
-            snr = (0.9 * snr) + (0.1f * instantSNR);
+            snr = (0.95f * snr) + (0.05f * calculatedMetric);
         }
-    } else if (pPwr <= 0 && noisePwr > 0) {
-            snr = (snr == -999.0f) ? -20.0f : (0.8f * snr) + (0.1f * -20.0f); 
-        
+    } else {
+        snr = (snr <= -100.0f) ? 12.5f : (0.95f * snr) + (0.05f * 12.5f);
     }
 }
+
+
+
+/*void ChannelProcessor::calculateSNR(Accumulators &acc, double &snr) {
+    float pPwr = (float)(acc.Pi * acc.Pi + acc.Pq * acc.Pq);
+    float noisePwr = (float)(acc.SEi * acc.SEi + acc.SEq * acc.SEq + acc.SLi * acc.SLi + acc.SLq * acc.SLq) / 4.0f;
+    
+    static int integrationStepsRun = 0;
+    integrationStepsRun++;
+
+    if (noisePwr > 0.0f && pPwr > 0.0f) {
+        float instantSNR = 10.0f * log10f(pPwr / noisePwr);
+        
+        // Absolute override: Force snap to the first valid real-world calculation window
+        if (integrationStepsRun <= 1 || snr < -100.0f || snr == 0.0f || snr == 3.0f) {
+            snr = instantSNR;
+        } else {
+            // Apply a smooth 95/5 tracking filter weight split
+            snr = (0.95f * snr) + (0.05f * instantSNR);
+        }
+    } else if (pPwr <= 0.0f && noisePwr > 0.0f) {
+        snr = (0.95f * snr) + (0.05f * -20.0f);
+    }
+} */
+
 
 ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
                                    G2INIT sv)
@@ -71,6 +107,11 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
     _oldCarrError = 0.0f;
     _oldCarrNco = 0.0f;
 
+    for (int i=0; i<20; ++i) {
+        _snrBufferI[i] = 0.0f;
+        _snrBufferQ[i] = 0.0f;
+    }
+    _snrBufferIndex = 0;
     // Rake Initialization
     _codeNco.LoadCACODE(_m_sv.CACODE); // Use the 0/1 chips for NCO
 //    _codeNco.RakeSpacing(CorrelatorSpacing::Narrow);
@@ -83,17 +124,6 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
 
     // Call the new pipeline pre-loader to fill EPLreg completely
     _codeNco.InitializeEPLPipeline(init.codePhase, chipTravelDelay);
-
-    /*
-    double initial_phase = init.codePhase;
-
-    // Add the delay to the rotations so the signal peak is at the Prompt bit
-    uint32_t whole_chips = (uint32_t)std::floor(initial_phase) + chipTravelDelay;
-    double fractional_part = initial_phase - std::floor(initial_phase);
-
-    _codeNco.rotations = whole_chips % 1023; // wrap at 1 ms boundary
-    _codeNco.m_phase = (uint32_t)(fractional_part * 4294967296.0);
-*/
 
     //    _nco.SetFrequency(4.092e6f + _doppler_hz); // Fixed to 4.092 MHz
     _carrFreqBasis = 4.092e6f;
@@ -143,6 +173,11 @@ CorrRes ChannelProcessor::process(const uint8_t *data, size_t count)
             
             uint32_t packedCodeResult = _codeNco.clk();
             bool isEpochRollover = (packedCodeResult & 0x80000000) !=0;
+
+            float cos_carr = _carrNco.cosine(carrIdx);
+            float sin_carr = _carrNco.sine(carrIdx);
+//            int32_t bb_i = (int32_t)((samp.i * cos_carr) + (samp.q * sin_carr));
+//            int32_t bb_q = (int32_t)((samp.q * cos_carr) - (samp.i * sin_carr));
 
             int32_t bb_i = samp.i * _carrNco.cosine(carrIdx);
             int32_t bb_q = samp.q * _carrNco.sine(carrIdx);

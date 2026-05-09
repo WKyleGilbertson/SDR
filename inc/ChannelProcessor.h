@@ -78,6 +78,9 @@ private:
     double _code_phase;
     double _snr;
     bool _isLocked;
+    float _snrBufferI[20]; // 20 ms tracking window
+    float _snrBufferQ[20]; // 20 ms tracking window
+    int _snrBufferIndex = 0;
     std::vector<int8_t> _ca_replica;
     BitSync _sync = {}; // Initialize to zero
     int8_t _lastSymbol = 0; // To detect sign flips
