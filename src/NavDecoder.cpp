@@ -181,3 +181,17 @@ bool NavDecoder::isParityValid(uint32_t word, int lastD30) {
 
     return true;
 }
+
+void NavDecoder::processTrackingMetrics(const CorrelatorResult& metrics) {
+    // 1. Maintain internal tracking sample ledger timeline
+    // This combines chunk offsets with your newly latched rollover timestamp
+    if (metrics.rollover_sample_idx > 0) {
+        _decoderSampleCounter = metrics.rollover_sample_idx;
+    }
+
+    // 2. Redirect vector arrays straight down into your original bits decoder engine block
+    // Passing metrics.Pi and metrics.Pq provides prompt data tracking access
+    if (!metrics.symbols.empty()) {
+        processBits(metrics.symbols, metrics.Pi, metrics.Pq);
+    }
+}

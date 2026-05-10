@@ -119,41 +119,6 @@ uint32_t NCO::clk(void) {
     return (idx | rolloverFlag); 
 }
 
-/*
-uint32_t NCO::clk(void) {
-    uint32_t index;
-
-    // 1. Advance Phase and check for Code Chip rollover
-    if (m_phase + m_dphase < m_phase) // Corrected overflow check
-    {
-        rotations++;
-        if (rotations >= 1023) rotations = 0; 
-    }
-
-    // 2. Update the Shift Register with the current Gold Code chip
-    EPLreg <<= 1;
-    // Ensure we only pull the LSB (0 or 1) from the CACODE table
-    EPLreg |= (static_cast<uint64_t>(CACODE[rotations]) & 0x01ULL);
-
-    // 3. Extract Early, Prompt, and Late bits
-    // Use the non-zero check (!= 0) to avoid needing specific 'shift' logic
-    // This turns a "high" bit into 1 and a "low" bit into -1
-    Early  = ((EPLreg & E_mask) != 0) ? 1 : -1;
-    Prompt = ((EPLreg & P_mask) != 0) ? 1 : -1;
-    Late   = ((EPLreg & L_mask) != 0) ? 1 : -1;
-
-    superEarly = ((EPLreg & SE_mask) != 0) ? 1 : -1;
-    superLate = ((EPLreg & SL_mask) != 0) ? 1 : -1;
-    // 4. Update phase accumulator for Carrier/Table lookup
-    m_phase += m_dphase;
-
-    // 5. Generate index for Sine/Cosine LUT
-    index = m_phase >> (32 - m_lglen);
-    idx = index & m_mask;
-
-    return idx;
-} */
-
 float NCO::cosine(int32_t idx) {
     return m_costable[idx];
 }

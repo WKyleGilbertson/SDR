@@ -10,6 +10,32 @@
 #include "AcquisitionMgr.hpp"
 #include "ChannelProcessor.h"
 #include "PCSEngine.hpp"
+#include "NavDecoder.h"
+struct ChannelState
+{
+    int prn;
+    AcqResult result;                            // Metadata from PCS (PRN, CodePhase, Bin)
+    G2INIT sv;                                   // The Gold Code replica (bits)
+    std::unique_ptr<ChannelProcessor> processor; // The active tracker
+    std::unique_ptr<NavDecoder> decoder;
+
+    bool isActive() const { return processor != nullptr; }
+
+    ChannelState(int p, double fs, const AcqResult &res, G2INIT s)
+        : prn(p), result(res), sv(s)
+    {
+        processor = std::make_unique<ChannelProcessor>(fs, result, s);
+        decoder = std::make_unique<NavDecoder>(p);
+    }
+
+    // Since unique_ptr can't be copied, we need to allow the vector to MOVE it
+    ChannelState(ChannelState &&) noexcept = default;
+    ChannelState &operator=(ChannelState &&) noexcept = default;
+
+    // Delete the default copy constructor
+    ChannelState(const ChannelState &) = delete;
+    ChannelState &operator=(const ChannelState &) = delete;
+};
 
 int main(int argc, char *argv[])
 {
@@ -119,17 +145,18 @@ int main(int argc, char *argv[])
                     for (auto &state : activeChannels)
                     {
                         // 1. Tracker does the heavy math (NCOs, Correlations, Bit Sync)
-                        CorrRes res = state.processor->process(block.data(), block_size);
+                        CorrelatorResult res = state.processor->Correlator(block.data(), block_size);
 
                         // 2. Decoder does the logic (Preamble, HOW, TOW, Subframes)
                         // We pass the sample count and the tracker's fine code phase
-                        state.decoder->processBits(res.symbols, currentTotalSamples, res.code_phase);
+                        state.decoder->processTrackingMetrics(res);
 
                         // 3. Telemetry (Optional: only print for your focus PRN)
                         if (state.prn == focusPRN)
                         {
                             printf("[PRN %3d] SNR: %5.1f | dF: %7.1f Hz | Phase: %7.2f | \r  ",
-                                   state.processor->getPRN() , res.snr, res.dopplerHZ, res.code_phase);
+                                   //state.processor->getPRN() , res.snr, res.dopplerHZ, res.code_phase);
+                                   res.prn, res.snr, res.doppler_hz, res.code_phase);
                             /*
                             printf("[PRN %3d] SNR: %4.1f dB | Locked: %s | NavBits: %zu\n",
                                    state.prn,

@@ -71,24 +71,22 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
       _codeNco(0, (float)fs_rate),  // New Tracking Code NCO
       _m_sv(sv)
 {
+    /*
     for (int i = 0; i < 20; i++)
     {
         _sync.buffer[i] = 0;
         _sync.histograms[i] = 0;
-    }
+    } */
     resetAccumulators(_acc);
     _snr = -999.0f;
     _isLocked = false;
-    _sync.count = 0;
-    _sync.bestOffset = -1;
-    _bitAccI = 0.0f;
-    _bitAccQ = 0.0f;
-    _lastSymbol = 0;
     _samplesPerMs = (size_t)(_fs / 1000.0);
     _prn = init.prn;
     _doppler_hz = init.bin * 500.0f;
     _oldCarrError = 0.0f;
     _oldCarrNco = 0.0f;
+    _accumulatedCarrierCycles = 0;
+    _sampleCounter = 0;
 
     for (int i = 0; i < 20; ++i)
     {
@@ -137,11 +135,12 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
     _codeLF.tau2 = 2.0f * _codeLF.zeta / _codeLF.omega_n;
 }
 
-CorrRes ChannelProcessor::process(const uint8_t *data, size_t count)
+CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
 {
     std::vector<int8_t> symbols;
 
     float block_Pi = 0, block_Pq = 0;
+    uint64_t latchedRolloverSample = 0;
     const UnpackEntry *lut = GetLUT_FNHN();
 
     for (size_t i = 0; i < count; ++i)
@@ -151,8 +150,16 @@ CorrRes ChannelProcessor::process(const uint8_t *data, size_t count)
         {
             const ComplexSample &samp = (s == 0) ? entry.s0 : entry.s1;
 
-            uint32_t packeCarrResult = _carrNco.clk();
-            uint32_t carrIdx = packeCarrResult & _carrNco.m_mask;
+            _sampleCounter++;
+
+            uint32_t oldCarrPhase = _carrNco.m_phase;
+
+            uint32_t packedCarrResult = _carrNco.clk();
+            uint32_t carrIdx = packedCarrResult & _carrNco.m_mask;
+
+            if (_carrNco.m_phase < oldCarrPhase) {
+                _accumulatedCarrierCycles++;
+            }
 
             uint32_t packedCodeResult = _codeNco.clk();
             bool isEpochRollover = (packedCodeResult & 0x80000000) != 0;
@@ -228,6 +235,7 @@ CorrRes ChannelProcessor::process(const uint8_t *data, size_t count)
                 calculateSNR(_acc, _snr);
                 _isLocked = (_snr > 10.f);
                 symbols.push_back((_acc.Pi > 0) ? 1 : -1);
+                latchedRolloverSample = _sampleCounter;
 
                 // 3. NOW reset the 1ms accumulators for the next Gold Code epoch
                 block_Pi += _acc.Pi;
@@ -238,9 +246,29 @@ CorrRes ChannelProcessor::process(const uint8_t *data, size_t count)
         }
     }
 
+       // 1. Compute the fractional phase inside the current cycle (0 to 2*pi radians)
+    double fractionalCarrierPhase = ((double)_carrNco.m_phase / 4294967296.0) * (2.0 * M_PI);
+    // 2. Combine full tracked integer cycles with the fractional remainder 
+    double absoluteCarrierPhase = ((double)_accumulatedCarrierCycles * (2.0 * M_PI)) + fractionalCarrierPhase;
+    // 3. Calculate your custom instantaneous carrier phase error for the console printout
+    double debugCarrierPhase = 0.0;
+    if (std::abs(block_Pi) > 0.0f) {
+        debugCarrierPhase = atan2((double)block_Pq, (double)block_Pi);
+    }
     double finePhase = (double)_codeNco.m_phase / 4294967296.0;
     _code_phase = (double)_codeNco.rotations + finePhase;
     float dF = _currentCommandedFreq - _carrFreqBasis;
 
-    return {(double)block_Pi, (double)block_Pq, _code_phase, dF, _snr, symbols};
+    return {
+        _prn,
+        (double)block_Pi,
+        (double)block_Pq,
+        debugCarrierPhase,
+        absoluteCarrierPhase,
+        _code_phase,
+        dF,
+        _snr,
+        latchedRolloverSample,
+        _isLocked,
+        symbols};
 }

@@ -1,6 +1,7 @@
 #pragma once
 #include <vector>
 #include <cstdint>
+#include "ChannelProcessor.h"
 
 struct Observation {
     int prn;
@@ -22,6 +23,7 @@ public:
 
     //NavDecoder(int prn) : _prn(prn), _subframeBuffer(300, 0) {}
     NavDecoder(int prn);
+    void processTrackingMetrics(const CorrelatorResult& metrics);
     void processBits(const std::vector<signed char>& bits, double promptI, double promptQ);
     bool hasSync() const { return _frameSync; }
     uint32_t getTOW() const { return _tow; }
@@ -54,4 +56,6 @@ private:
     Observation _lastObservation = {0, 0, 0, 0, false};
 
     uint32_t getBits(int startBit, int len); 
+    BitSync _sync = {};
+    uint64_t _decoderSampleCounter = 0;
 };
