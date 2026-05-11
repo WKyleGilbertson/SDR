@@ -15,28 +15,29 @@ enum CorrelatorSpacing {halfChip, Narrow};
 class NCO {
 public:
     const float ONE_ROTATION = (float) 2.0 * (1u << 31);
-    float SAMPLE_RATE, Frequency;
-    uint32_t m_lglen, m_len, m_mask, m_phase, m_dphase, m_bias, k, idx;
-    float * m_sintable, * m_costable, m_sample_clk;
-    uint16_t rotations;
-    uint64_t EPLreg;
-    int8_t Early, Prompt, Late;
-    int8_t superEarly, superLate;
-    int8_t CACODE[1023];
-    float * m_table;
+    float SAMPLE_RATE, Frequency = 0.0;
+    int8_t Early = 0, Prompt = 0, Late = 0;
+    int8_t superEarly = 0, superLate = 0;
     NCO(const int lgtblsize, const float m_sample_clk);
     ~NCO(void);
     void SetFrequency(float f);
     void RakeSpacing(CorrelatorSpacing cs);
-    //void LoadCACODE(int8_t *CODE);
     void LoadCACODE(uint8_t *CODE); // DSP conversion happens in Rake
     uint32_t clk(void);
-    float cosine(int32_t idx);
-    float sine(int32_t idx);
+    float cosine(int32_t idx) const {return m_costable[idx];}
+    float sine(int32_t idx) const {return m_sintable[idx];}
+    uint32_t getPhase() const {return m_phase;}
+    uint32_t getRotations() const {return m_rotations;}
+    uint32_t getMask() const {return m_mask;}
     void NCO::InitializeEPLPipeline(double initialCodePhase, int chipTravelDelay);
 private:
-    uint64_t E_mask, P_mask, L_mask;
-    uint64_t SE_mask,SL_mask;
+    uint32_t m_lglen, m_len, m_mask, m_phase, m_dphase, m_bias, idx;// k;
+    uint16_t m_rotations = 0;
+    uint64_t EPLreg = 0ULL;
+    int8_t CACODE[1023];
+    float * m_sintable = nullptr;
+    float * m_costable = nullptr;
+    float m_sample_clk;
+    uint64_t E_mask, P_mask, L_mask, SE_mask, SL_mask;
     uint8_t shift;
-
 };

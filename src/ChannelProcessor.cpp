@@ -152,12 +152,13 @@ CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
 
             _sampleCounter++;
 
-            uint32_t oldCarrPhase = _carrNco.m_phase;
-
+            //uint32_t oldCarrPhase = _carrNco.m_phase;
+            uint32_t oldCarrPhase = _carrNco.getPhase();
             uint32_t packedCarrResult = _carrNco.clk();
-            uint32_t carrIdx = packedCarrResult & _carrNco.m_mask;
 
-            if (_carrNco.m_phase < oldCarrPhase) {
+            uint32_t carrIdx = packedCarrResult & _carrNco.getMask();
+
+            if (_carrNco.getPhase() < oldCarrPhase) {
                 _accumulatedCarrierCycles++;
             }
 
@@ -247,7 +248,7 @@ CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
     }
 
        // 1. Compute the fractional phase inside the current cycle (0 to 2*pi radians)
-    double fractionalCarrierPhase = ((double)_carrNco.m_phase / 4294967296.0) * (2.0 * M_PI);
+    double fractionalCarrierPhase = ((double)_carrNco.getPhase() / 4294967296.0) * (2.0 * M_PI);
     // 2. Combine full tracked integer cycles with the fractional remainder 
     double absoluteCarrierPhase = ((double)_accumulatedCarrierCycles * (2.0 * M_PI)) + fractionalCarrierPhase;
     // 3. Calculate your custom instantaneous carrier phase error for the console printout
@@ -255,8 +256,8 @@ CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
     if (std::abs(block_Pi) > 0.0f) {
         debugCarrierPhase = atan2((double)block_Pq, (double)block_Pi);
     }
-    double finePhase = (double)_codeNco.m_phase / 4294967296.0;
-    _code_phase = (double)_codeNco.rotations + finePhase;
+    double finePhase = (double)_codeNco.getPhase() / 4294967296.0;
+    _code_phase = (double)_codeNco.getRotations() + finePhase;
     float dF = _currentCommandedFreq - _carrFreqBasis;
 
     return {

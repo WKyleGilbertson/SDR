@@ -28,19 +28,13 @@ NCO::NCO(const int lgtblsize, const float m_sample_clk) {
     // We'll initialize our initial phase and frequency to zero
     m_phase = 0;
     m_dphase = 0;
-//    m_bias = pow(2,32)*IF/m_sample_clk; // This is not used for anything.
-    rotations = 0;
+    m_rotations = 0;
 }
 
 NCO::~NCO(void) {
     delete[] m_sintable; // On any object deletion, delete the table as well
     delete[] m_costable;
 }
-
-// Adjust the sample rate for your implementation as necessary
-//const	float	SAMPLE_RATE= 1.0;
-//const float SAMPLE_RATE = 38.192e6; // Moved to header file
-//const float ONE_ROTATION = 2.0 * (1u << (sizeof(unsigned) * 8 - 1));
 
 void NCO::SetFrequency(float f) {
     // Convert the frequency to a fractional difference in phase
@@ -90,16 +84,16 @@ uint32_t NCO::clk(void) {
     // 1. Advance Phase and check for Code Chip rollover
     if (m_phase + m_dphase < m_phase) 
     {
-        rotations++;
-        if (rotations >= 1023) {
-            rotations = 0;
+        m_rotations++;
+        if (m_rotations >= 1023) {
+            m_rotations = 0;
             rolloverFlag = 0x80000000; // Set top bit high to indicate a 1ms epoch wrap!
         }
     }
 
     // 2. Update the Shift Register with current Gold Code chip
     EPLreg <<= 1;
-    EPLreg |= (static_cast<uint64_t>(CACODE[rotations]) & 0x01ULL);
+    EPLreg |= (static_cast<uint64_t>(CACODE[m_rotations]) & 0x01ULL);
 
     // 3. Extract Correlator Pipeline Masks
     Early      = ((EPLreg & E_mask) != 0) ? 1 : -1;
@@ -119,14 +113,6 @@ uint32_t NCO::clk(void) {
     return (idx | rolloverFlag); 
 }
 
-float NCO::cosine(int32_t idx) {
-    return m_costable[idx];
-}
-
-float NCO::sine(int32_t idx) {
-   return m_sintable[idx]; 
-}
-
 void NCO::InitializeEPLPipeline(double initialCodePhase, int chipTravelDelay) {
     // Clear out any old history in the shift register
     EPLreg = 0ULL;
@@ -137,13 +123,13 @@ void NCO::InitializeEPLPipeline(double initialCodePhase, int chipTravelDelay) {
 
     // Set the phase register precisely to match the fractional remainder
     m_phase = (uint32_t)(fractional_part * 4294967296.0);
-    rotations = (base_rotation + chipTravelDelay) % 1023;
+    m_rotations = (base_rotation + chipTravelDelay) % 1023;
 
     // Pre-fill the 64-bit shift register looking backwards in time
     // So that the target chip sits exactly at the Prompt mask (Bit 32)
     for (int i = 0; i < 64; ++i) {
         // Calculate historical chip positions wrapping at the 1023 C/A boundary
-        int historical_offset = (int)rotations - 32 + i;
+        int historical_offset = (int)m_rotations - 32 + i;
         while (historical_offset < 0) historical_offset += 1023;
         uint32_t chip_idx = (uint32_t)(historical_offset) % 1023;
 
