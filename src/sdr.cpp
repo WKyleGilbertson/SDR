@@ -154,16 +154,21 @@ int main(int argc, char *argv[])
                         // 3. Telemetry (Optional: only print for your focus PRN)
                         if (state.prn == focusPRN)
                         {
-                            printf("[PRN %3d] SNR: %5.1f | dF: %7.1f Hz | Phase: %7.2f | \r  ",
-                                   //state.processor->getPRN() , res.snr, res.dopplerHZ, res.code_phase);
-                                   res.prn, res.snr, res.doppler_hz, res.code_phase);
-                            /*
-                            printf("[PRN %3d] SNR: %4.1f dB | Locked: %s | NavBits: %zu\n",
-                                   state.prn,
-                                   state.processor->getSNR(),
-                                   state.processor->isLocked() ? "YES" : "NO",
-                                   */
-                            //                                   res.navBits.size());
+                            char lockChar = res.is_locked ? 'L' : 'U';
+                            char symChar = (res.Pi > 0.0) ? '#' : '-';
+                            double mag = sqrt(res.Pi * res.Pi + res.Pq * res.Pq);
+
+                            printf("[%c%c] SNR:%4.1f | dF:%8.1f | Code:%7.2f | Err:%5.2f | Pi: %6.0e | Pq: %6.0e\r",
+                                   // printf("[%c%c] SNR:%4.1f | dF:%6.1f | Code:%7.2f | Err:%5.2f | AbsP:%7.0f | S:%llu\r",
+                                   lockChar,                // L/U status
+                                   symChar,                 // #/- symbol representation
+                                   res.snr,                 // Tracked signal strength
+                                   res.doppler_hz,          // Retained Doppler tracking frequency error (dF)
+                                   res.code_phase,          // Retained fine tracking code phase (Code)
+                                   res.carrier_phase_error, // Instantaneous tracking error angle (Err)
+                                   res.Pi, res.Pq);
+                            //                            printf("[PRN %3d] SNR: %5.1f | dF: %7.1f Hz | Phase: %7.2f | \r  ",
+                            //                                   res.prn, res.snr, res.doppler_hz, res.code_phase);
                             // The decoder's handleWordEnd will already print TOW/Subframe
                             // thanks to the printf inside NavDecoder.cpp
                         }

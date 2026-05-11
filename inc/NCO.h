@@ -31,7 +31,7 @@ public:
     uint32_t getMask() const {return m_mask;}
     void NCO::InitializeEPLPipeline(double initialCodePhase, int chipTravelDelay);
 private:
-    uint32_t m_lglen, m_len, m_mask, m_phase, m_dphase, m_bias, idx;// k;
+    uint32_t m_lglen, m_len, m_mask, m_phase, m_dphase, m_bias, idx;
     uint16_t m_rotations = 0;
     uint64_t EPLreg = 0ULL;
     int8_t CACODE[1023];

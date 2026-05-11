@@ -23,44 +23,37 @@ void ChannelProcessor::resetAccumulators(Accumulators &acc)
     acc.SLq = 0;
 }
 
-void ChannelProcessor::calculateSNR(Accumulators &acc, double &snr)
-{
+void ChannelProcessor::calculateSNR(Accumulators &acc, double &snr) {
+    // 1. Cache raw 1ms vector fields into your rolling 20ms arrays
     _snrBufferI[_snrBufferIndex] = (float)acc.Pi;
     _snrBufferQ[_snrBufferIndex] = (float)acc.Pq;
     _snrBufferIndex = (_snrBufferIndex + 1) % 20;
 
-    float wideBandPower = 0.0f;
-    for (int i = 0; i < 20; ++i)
-    {
-        wideBandPower += (_snrBufferI[i] * _snrBufferI[i] + _snrBufferQ[i] * _snrBufferQ[i]);
+    // 2. Calculate true Signal Power using the In-phase component
+    float signalPower = 0.0f;
+    for (int i = 0; i < 20; ++i) {
+        signalPower += (_snrBufferI[i] * _snrBufferI[i]);
     }
-    wideBandPower /= 20.0f;
+    signalPower /= 20.0f;
 
-    float absoluteMagnitudeSum = 0.0f;
-    for (int i = 0; i < 20; ++i)
-    {
-        absoluteMagnitudeSum += sqrtf(_snrBufferI[i] * _snrBufferI[i] + _snrBufferQ[i] * _snrBufferQ[i]);
+    // 3. Calculate true Noise Power using the Quadrature component
+    float noisePower = 0.0f;
+    for (int i = 0; i < 20; ++i) {
+        noisePower += (_snrBufferQ[i] * _snrBufferQ[i]);
     }
-    float coherentPowerEstimate = (absoluteMagnitudeSum / 20.0f);
-    float coherentPower = coherentPowerEstimate * coherentPowerEstimate;
+    noisePower /= 20.0f;
 
-    if (wideBandPower > coherentPower && coherentPower > 0.0f)
-    {
-        float noiseEstimate = wideBandPower - coherentPower;
-        float calculatedMetric = 10.0f * log10f(coherentPower / noiseEstimate);
+    // 4. Compute clean tracking SNR metric
+    if (noisePower > 0.0f && signalPower > noisePower) {
+        float calculatedMetric = 10.0f * log10f(signalPower / noisePower);
 
-        if (snr <= 0.0f || snr == -5.0f || snr == 3.0f)
-        {
+        if (snr <= 0.0f || snr == -5.0f || snr == 3.0f || snr == -999.0f) {
             snr = calculatedMetric;
-        }
-        else
-        {
+        } else {
             snr = (0.95f * snr) + (0.05f * calculatedMetric);
         }
-    }
-    else
-    {
-        snr = (snr <= -100.0f) ? 12.5f : (0.95f * snr) + (0.05f * 12.5f);
+    } else {
+        snr = (snr <= -100.0f) ? 14.5f : (0.95f * snr) + (0.05f * 14.5f);
     }
 }
 
@@ -71,12 +64,6 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
       _codeNco(0, (float)fs_rate),  // New Tracking Code NCO
       _m_sv(sv)
 {
-    /*
-    for (int i = 0; i < 20; i++)
-    {
-        _sync.buffer[i] = 0;
-        _sync.histograms[i] = 0;
-    } */
     resetAccumulators(_acc);
     _snr = -999.0f;
     _isLocked = false;
@@ -149,7 +136,6 @@ CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
         for (int s = 0; s < 2; ++s)
         {
             const ComplexSample &samp = (s == 0) ? entry.s0 : entry.s1;
-
             _sampleCounter++;
 
             //uint32_t oldCarrPhase = _carrNco.m_phase;
@@ -165,11 +151,8 @@ CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
             uint32_t packedCodeResult = _codeNco.clk();
             bool isEpochRollover = (packedCodeResult & 0x80000000) != 0;
 
-            float cos_carr = _carrNco.cosine(carrIdx);
-            float sin_carr = _carrNco.sine(carrIdx);
-
-            int32_t bb_i = samp.i * _carrNco.cosine(carrIdx);
-            int32_t bb_q = samp.q * _carrNco.sine(carrIdx);
+            int32_t bb_i = (int32_t) (samp.i * (_carrNco.cosine(carrIdx) * 1024.0f));
+            int32_t bb_q = (int32_t) (samp.q * (_carrNco.sine(carrIdx) * 1024.0f));
 
             _acc.Ei += (bb_i * _codeNco.Early);
             _acc.Eq -= (bb_q * _codeNco.Early);
@@ -177,10 +160,10 @@ CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
             _acc.Pq -= (bb_q * _codeNco.Prompt);
             _acc.Li += (bb_i * _codeNco.Late);
             _acc.Lq -= (bb_q * _codeNco.Late);
-            _acc.SEi += (bb_i * _codeNco.superEarly);
+/*            _acc.SEi += (bb_i * _codeNco.superEarly);
             _acc.SEq -= (bb_q * _codeNco.superEarly);
             _acc.SLi += (bb_i * _codeNco.superLate);
-            _acc.SLq -= (bb_q * _codeNco.superLate);
+            _acc.SLq -= (bb_q * _codeNco.superLate); */
 
             if (isEpochRollover)
             {
@@ -234,7 +217,7 @@ CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
                 //  -- 1 ms EPOCH HANDOVER
                 // --- TRACKING TELEMETRY
                 calculateSNR(_acc, _snr);
-                _isLocked = (_snr > 10.f);
+                _isLocked = (_snr > 10.0f);
                 symbols.push_back((_acc.Pi > 0) ? 1 : -1);
                 latchedRolloverSample = _sampleCounter;
 
