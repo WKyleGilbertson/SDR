@@ -6,6 +6,7 @@
 #include <sstream>
 #include <string>
 #include <cstdint>
+#include <cstdio>
 
 std::string get_iso8601_timestamp(uint32_t unix_time, uint16_t ms_offset);
 struct TimeTrio {
@@ -53,3 +54,7 @@ inline void unpackL1IF_LUT(uint8_t b, const UnpackEntry* lut, ComplexSample& out
     out0 = entry.s0;
     out1 = entry.s1;
 }
+
+struct CorrelatorResult;
+
+void printCorrelatorData(FILE * fp, CorrelatorResult &res);

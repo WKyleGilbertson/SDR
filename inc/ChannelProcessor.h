@@ -17,7 +17,9 @@ struct CorrelatorResult {
     double snr;
     uint64_t rollover_sample_idx;
     bool is_locked;
-    std::vector<int8_t> symbols;
+  //  std::vector<int8_t> symbols;
+  int8_t symbols[32];
+  int numSymbols;
 };
 struct LoopFilter
 {
@@ -54,6 +56,7 @@ private:
     NCO _codeNco; // Code NCO (Initial ~1.023 MHz)
     G2INIT _m_sv;
     size_t _samplesPerMs;
+    uint8_t _msIntegrated = 0;
     // Loop Filter State from TrkBST.cpp
     float _carrFreqBasis;
     float _codeFreqBasis;
@@ -72,6 +75,7 @@ private:
     double _code_phase;
     double _snr;
     bool _isLocked;
+    uint32_t _prevCodePhase = 0;
     std::vector<int8_t> _ca_replica;
     int64_t _accumulatedCarrierCycles = 0; // Tracks the total number of carrier integer overflows
     float _snrBufferI[20]; // 20 ms tracking window
