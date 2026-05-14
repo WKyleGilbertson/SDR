@@ -87,7 +87,6 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     int chipTravelDelay = (int)std::round(32.0f / spc);
     _codeNco.InitializeEPLPipeline(init.codePhase, chipTravelDelay);
 
-
     _carrNco.SetFrequency(_carrFreqBasis - (float)_doppler_hz);
     _codeNco.SetFrequency(_codeFreqBasis);
     _currentCommandedFreq = _oldCarrNco;
@@ -125,7 +124,7 @@ CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
     const UnpackEntry *lut = GetLUT_FNHN();
 
     // 1. Maintain tracking wave frequency alignment continuously
-    _carrNco.SetFrequency(_currentCommandedFreq);
+    // _carrNco.SetFrequency(_currentCommandedFreq);
 
     for (size_t i = 0; i < count; ++i)
     {
@@ -170,12 +169,12 @@ CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
                     float codeError = 0.0f;
                     float I = (float)_acc.Pi;
                     float Q = (float)_acc.Pq;
-                    float amplitudeSq = (I*I) + (Q*Q);
+                    float amplitudeSq = (I * I) + (Q * Q);
 
                     // Two-quadrant arctan phase discriminator (-pi to +pi)
                     if (std::abs(I) >= 1e-6f)
                     {
-                        carrError = atanf(Q/I);
+                        carrError = atanf(Q / I);
                     }
                     else
                     {
@@ -223,39 +222,38 @@ CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
                     float aiding = (_prn < 100) ? ((float)_doppler_hz / 1540.0f) : 0.0f;
                     _codeNco.SetFrequency(_codeFreqBasis + codeNcoUpdate + aiding);
 
+                    // 7. Harvest Data
+                    double fractionalCarrierPhase = ((double)_carrNco.getPhase() / 4294967296.0) * (2.0 * M_PI);
+                    double absoluteCarrierPhase = ((double)_accumulatedCarrierCycles * (2.0 * M_PI)) + fractionalCarrierPhase;
+
+                    double debugCarrierPhase = 0.0;
+                    if (std::abs(block_Pi) > 0.0f)
+                    {
+                        // debugCarrierPhase = atan2((double)block_Pq, (double)block_Pi);
+                        debugCarrierPhase = atanf((double)block_Pq / (double)block_Pi);
+                    }
+
+                    double finePhase = (double)_codeNco.getPhase() / 4294967296.0;
+                    _code_phase = (double)_codeNco.getRotations() + finePhase;
+                    // float dF = _currentCommandedFreq - _carrFreqBasis;
+                    float dF = (float)(_carrFreqBasis - _currentCommandedFreq);
+                    res.carrier_phase_error = debugCarrierPhase;
+                    res.absolute_carrier_phase = absoluteCarrierPhase;
+                    res.doppler_hz = dF;
+                    res.prn = _prn;
+                    res.Pi = (double)block_Pi;
+                    res.Pq = (double)block_Pq;
+                    res.code_phase = _code_phase;
+                    res.snr = _snr;
+                    res.rollover_sample_idx = latchedRolloverSample;
+                    res.is_locked = _isLocked;
+
                     // 6. Clear accumulator data safely
                     resetAccumulators(_acc);
                     _msIntegrated = 0;
-                }
-            }
-        }
-    }
-
-    double fractionalCarrierPhase = ((double)_carrNco.getPhase() / 4294967296.0) * (2.0 * M_PI);
-    double absoluteCarrierPhase = ((double)_accumulatedCarrierCycles * (2.0 * M_PI)) + fractionalCarrierPhase;
-
-    double debugCarrierPhase = 0.0;
-    if (std::abs(block_Pi) > 0.0f)
-    {
-        //debugCarrierPhase = atan2((double)block_Pq, (double)block_Pi);
-        debugCarrierPhase = atanf((double)block_Pq / (double)block_Pi);
-    }
-
-    double finePhase = (double)_codeNco.getPhase() / 4294967296.0;
-    _code_phase = (double)_codeNco.getRotations() + finePhase;
-    //float dF = _currentCommandedFreq - _carrFreqBasis;
-    float dF = (float)(_carrFreqBasis - _currentCommandedFreq);
-
-    res.prn = _prn;
-    res.Pi = (double)block_Pi;
-    res.Pq = (double)block_Pq;
-    res.carrier_phase_error = debugCarrierPhase;
-    res.absolute_carrier_phase = absoluteCarrierPhase;
-    res.code_phase = _code_phase;
-    res.doppler_hz = dF;
-    res.snr = _snr;
-    res.rollover_sample_idx = latchedRolloverSample;
-    res.is_locked = _isLocked;
-
+                } // End of ms Integrated Loop
+            } // End of Gold Code Epoch Loop
+        } // Endo of sub-sample Loops
+    } // End of main array sample Loops
     return res;
 }
