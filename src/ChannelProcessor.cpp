@@ -184,9 +184,17 @@ CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
                     // 2. Process code loop variables before changing NCO state
                     float E = sqrtf((float)(_acc.Ei * _acc.Ei + _acc.Eq * _acc.Eq));
                     float L = sqrtf((float)(_acc.Li * _acc.Li + _acc.Lq * _acc.Lq));
-                    if ((E + L) > 0.0f)
+                    float P = sqrtf((float)(_acc.Pi * _acc.Pi + _acc.Pq * _acc.Pq));
+                    if (P > 1e-6f) 
+                    //if ((E + L) > 0.0f)
                     {
-                        codeError = (E - L) / (E + L);
+                        //codeError = (E - L) / (E + L);
+                        codeError = (E - L) / (2.0f * P);
+                        if (codeError > 1.0f) codeError = 1.0f;
+                        if (codeError < -1.0f) codeError = -1.0f;
+                    }
+                    else {
+                        codeError = 0.0f;
                     }
                     // 3. Process signal quality metrics
                     calculateSNR(_acc, _snr);
