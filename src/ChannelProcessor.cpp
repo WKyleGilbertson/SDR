@@ -63,7 +63,8 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     _prn = init.prn;
     _doppler_hz = init.bin * 500.0f;
     _oldCarrError = 0.0f;
-    _oldCarrNco = 0.0f;
+    //_oldCarrNco = 0.0f;
+    _oldCarrNco = _doppler_hz;
     _oldCodeError = 0.0f;
     _oldCodeNco = 0.0f;
     _accumulatedCarrierCycles = 0;
@@ -88,9 +89,9 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     _carrFreqBasis = 4.092e6f;
     _codeFreqBasis = 1.023e6f;
 
-    _carrNco.SetFrequency(_carrFreqBasis + (float)_doppler_hz);
+    _carrNco.SetFrequency(_carrFreqBasis - (float)_doppler_hz);
     _codeNco.SetFrequency(_codeFreqBasis);
-    _currentCommandedFreq = _carrFreqBasis + (float)_doppler_hz;
+    _currentCommandedFreq = _carrFreqBasis - (float)_doppler_hz;
 
     _ca_replica.resize(1023);
     for (int i = 0; i < 1023; i++)
@@ -168,14 +169,17 @@ CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
                     float codeError = 0.0f;
                     float I = (float)_acc.Pi;
                     float Q = (float)_acc.Pq;
+                    float amplitudeSq = (I*I) + (Q*Q);
 
                     // Two-quadrant arctan phase discriminator (-pi to +pi)
                     if (std::abs(I) >= 1e-6f)
                     {
-                        carrError = atan2f(Q, I);
+                        carrError = atanf(Q/I);
+                        //carrError =(Q*I)/amplitudeSq;
                     }
                     else
                     {
+                        //carrError = 0.0f;
                         carrError = (Q >= 0.0f) ? 1.570796f : -1.570796f;
                     }
 
@@ -236,7 +240,8 @@ CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
     double debugCarrierPhase = 0.0;
     if (std::abs(block_Pi) > 0.0f)
     {
-        debugCarrierPhase = atan2((double)block_Pq, (double)block_Pi);
+        //debugCarrierPhase = atan2((double)block_Pq, (double)block_Pi);
+        debugCarrierPhase = atanf((double)block_Pq / (double)block_Pi);
     }
 
     double finePhase = (double)_codeNco.getPhase() / 4294967296.0;
