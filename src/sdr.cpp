@@ -202,7 +202,7 @@ int main(int argc, char *argv[])
                                         out = nullptr;
                                     }
                                 }
-                                if (epochs_captured % 200 == 0)
+                                if (epochs_captured % 100 == 0)
                                 {
                                     printCorrelatorData(stdout, res);
                                     fprintf(stdout, "\r");
