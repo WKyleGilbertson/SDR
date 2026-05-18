@@ -17,7 +17,7 @@ struct CorrelatorResult {
     double snr;
     uint64_t rollover_sample_idx;
     bool is_locked;
-  //  std::vector<int8_t> symbols;
+  bool epoch_valid;
   int8_t symbols[32];
   int numSymbols;
 };

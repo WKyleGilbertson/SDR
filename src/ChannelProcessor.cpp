@@ -111,44 +111,41 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     _codeLF.tau2 = 2.0f * _codeLF.zeta / _codeLF.omega_n;
 }
 
-CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
-{
-    CorrelatorResult res = {};
-    res.numSymbols = 0;
-
+CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count) {
     const int target_integration_ms = 1;
     const float T = 0.001f * target_integration_ms;
-
-    float block_Pi = 0, block_Pq = 0;
     uint64_t latchedRolloverSample = 0;
     const UnpackEntry *lut = GetLUT_FNHN();
 
-    // 1. Maintain tracking wave frequency alignment continuously
-    // _carrNco.SetFrequency(_currentCommandedFreq);
+    // Track if a true 1ms epoch rollover occurred at any point during this slice
+    bool epochTriggered = false;
 
-    for (size_t i = 0; i < count; ++i)
-    {
+    for (size_t i = 0; i < count; ++i) {
         const UnpackEntry &entry = lut[data[i]];
-        for (int s = 0; s < 2; ++s)
-        {
+        
+        for (int s = 0; s < 2; ++s) {
             const ComplexSample &samp = (s == 0) ? entry.s0 : entry.s1;
             _sampleCounter++;
-
+            
             uint32_t oldCarrPhase = _carrNco.getPhase();
-            uint32_t packedCarrResult = _carrNco.clk();
-            uint32_t carrIdx = packedCarrResult & _carrNco.getMask();
-
-            if (_carrNco.getPhase() < oldCarrPhase)
-            {
+            uint32_t carrIdx = _carrNco.clk();
+            if (_carrNco.getPhase() < oldCarrPhase) {
                 _accumulatedCarrierCycles++;
             }
-
-            // Tracking true chip transitions natively
+            
             uint32_t oldCodeRotations = _codeNco.getRotations();
             _codeNco.clk();
-            bool goldCodeEpochEvent = (_codeNco.getRotations() > oldCodeRotations);
+            
+            // Check for the true 1ms Gold Code Epoch Event
+            if (_codeNco.getRotations() > oldCodeRotations) {
+                _msIntegrated++;
+                if (_msIntegrated >= target_integration_ms) {
+                    epochTriggered = true;
+                    latchedRolloverSample = _sampleCounter;
+                }
+            }
 
-            // High-resolution 1024 scaling factor mix line
+            // Mix and accumulate EVERY sample continuously without dropping data
             int32_t bb_i = (int32_t)(samp.i * (_carrNco.cosine(carrIdx) * 1024.0f));
             int32_t bb_q = (int32_t)(samp.q * (_carrNco.sine(carrIdx) * 1024.0f));
 
@@ -158,110 +155,89 @@ CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
             _acc.Pq -= (bb_q * _codeNco.Prompt);
             _acc.Li += (bb_i * _codeNco.Late);
             _acc.Lq -= (bb_q * _codeNco.Late);
+        } // End of sub-sample Loop s
+    } // End of main array sample loops
 
-            if (goldCodeEpochEvent)
-            {
-                _msIntegrated++;
-                if (_msIntegrated >= target_integration_ms)
-                {
-                    // 1. Calculate the carrier phase tracking error vector
-                    float carrError = 0.0f;
-                    float codeError = 0.0f;
-                    float I = (float)_acc.Pi;
-                    float Q = (float)_acc.Pq;
-                    float amplitudeSq = (I * I) + (Q * Q);
+    // Run tracking loop calculations ONLY after the entire slice buffer is completed
+    if (epochTriggered) {
+        CorrelatorResult res = {};
+        res.numSymbols = 0;
+        res.epoch_valid = true; // Telemetry is verified and complete
 
-                    // Two-quadrant arctan phase discriminator (-pi to +pi)
-                    if (std::abs(I) >= 1e-6f)
-                    {
-                        carrError = atanf(Q / I);
-                    }
-                    else
-                    {
-                        carrError = (Q >= 0.0f) ? 1.570796f : -1.570796f;
-                    }
+        float carrError = 0.0f;
+        float codeError = 0.0f;
+        float I = (float)_acc.Pi;
+        float Q = (float)_acc.Pq;
 
-                    // 2. Process code loop variables before changing NCO state
-                    float E = sqrtf((float)(_acc.Ei * _acc.Ei + _acc.Eq * _acc.Eq));
-                    float L = sqrtf((float)(_acc.Li * _acc.Li + _acc.Lq * _acc.Lq));
-                    float P = sqrtf((float)(_acc.Pi * _acc.Pi + _acc.Pq * _acc.Pq));
-                    if (P > 1e-6f) 
-                    //if ((E + L) > 0.0f)
-                    {
-                        //codeError = (E - L) / (E + L);
-                        codeError = (E - L) / (2.0f * P);
-                        if (codeError > 1.0f) codeError = 1.0f;
-                        if (codeError < -1.0f) codeError = -1.0f;
-                    }
-                    else {
-                        codeError = 0.0f;
-                    }
-                    // 3. Process signal quality metrics
-                    calculateSNR(_acc, _snr);
-                    _isLocked = (_snr > 12.0f); // Standard GPS operational lock threshold
+        if (std::abs(I) >= 1e-6f) {
+            carrError = atanf(Q / I);
+        } else {
+            carrError = (Q >= 0.0f) ? 1.570796f : -1.570796f;
+        }
 
-                    if (res.numSymbols < 32)
-                    {
-                        res.symbols[res.numSymbols++] = (_acc.Pi > 0) ? 1 : -1;
-                    }
+        float E = sqrtf((float)(_acc.Ei * _acc.Ei + _acc.Eq * _acc.Eq));
+        float L = sqrtf((float)(_acc.Li * _acc.Li + _acc.Lq * _acc.Lq));
+        float P = sqrtf((float)(_acc.Pi * _acc.Pi + _acc.Pq * _acc.Pq));
 
-                    latchedRolloverSample = _sampleCounter;
-                    block_Pi += (float)_acc.Pi;
-                    block_Pq += (float)_acc.Pq;
-                    // 4. NOW compute filter state updates safely
-                    float carrNcoUpdate = _oldCarrNco + (_carrLF.tau2 / _carrLF.tau1) * (carrError - _oldCarrError) + (carrError * (T / _carrLF.tau1));
-                    _oldCarrNco = carrNcoUpdate;
-                    _oldCarrError = carrError;
+        if (P > 1e-6f) {
+            codeError = (E - L) / (2.0f * P);
+            if (codeError > 1.0f) codeError = 1.0f;
+            if (codeError < -1.0f) codeError = -1.0f;
+        } else {
+            codeError = 0.0f;
+        }
 
-                    // Clean isolation of true Doppler offset (relative to base IF)
-                    _doppler_hz = (double)(_carrFreqBasis - carrNcoUpdate);
+        calculateSNR(_acc, _snr);
+        _isLocked = (_snr > 12.0f);
 
-                    float codeNcoUpdate = _oldCodeNco + (_codeLF.tau2 / _codeLF.tau1) * (codeError - _oldCodeError) + (codeError * (T / _codeLF.tau1));
-                    _oldCodeNco = codeNcoUpdate;
-                    _oldCodeError = codeError;
+        if (res.numSymbols < 32) {
+            res.symbols[res.numSymbols++] = (_acc.Pi > 0) ? 1 : -1;
+        }
 
-                    // FIX: Doppler must be ADDED to match standard low-side mixing tracking
-                    // 5. Apply the final frequency parameters to the hardware registers concurrently
-                    _currentCommandedFreq = carrNcoUpdate;
-                    _carrNco.SetFrequency(_currentCommandedFreq);
+        float carrNcoUpdate = _oldCarrNco + (_carrLF.tau2 / _carrLF.tau1) * (carrError - _oldCarrError) + (carrError * (T / _carrLF.tau1));
+        _oldCarrNco = carrNcoUpdate;
+        _oldCarrError = carrError;
+        _doppler_hz = (double)(_carrFreqBasis - carrNcoUpdate);
 
-                    // FIX: Carrier-to-code aiding must isolate raw Doppler shift only
-                    // GPS L1 Coherent carrier-to-code scaling factor = 1 / 1540
-                    float aiding = (_prn < 100) ? ((float)_doppler_hz / 1540.0f) : 0.0f;
-                    _codeNco.SetFrequency(_codeFreqBasis + codeNcoUpdate + aiding);
+        float codeNcoUpdate = _oldCodeNco + (_codeLF.tau2 / _codeLF.tau1) * (codeError - _oldCodeError) + (codeError * (T / _codeLF.tau1));
+        _oldCodeNco = codeNcoUpdate;
+        _oldCodeError = codeError;
 
-                    // 7. Harvest Data
-                    double fractionalCarrierPhase = ((double)_carrNco.getPhase() / 4294967296.0) * (2.0 * M_PI);
-                    double absoluteCarrierPhase = ((double)_accumulatedCarrierCycles * (2.0 * M_PI)) + fractionalCarrierPhase;
+        _currentCommandedFreq = carrNcoUpdate;
+        _carrNco.SetFrequency(_currentCommandedFreq);
 
-                    double debugCarrierPhase = 0.0;
-                    if (std::abs(block_Pi) > 0.0f)
-                    {
-                        // debugCarrierPhase = atan2((double)block_Pq, (double)block_Pi);
-                        debugCarrierPhase = atanf((double)block_Pq / (double)block_Pi);
-                    }
+        float aiding = (_prn < 100) ? ((float)_doppler_hz / 1540.0f) : 0.0f;
+        _codeNco.SetFrequency(_codeFreqBasis + codeNcoUpdate + aiding);
 
-                    double finePhase = (double)_codeNco.getPhase() / 4294967296.0;
-                    _code_phase = (double)_codeNco.getRotations() + finePhase;
-                    // float dF = _currentCommandedFreq - _carrFreqBasis;
-                    float dF = (float)(_carrFreqBasis - _currentCommandedFreq);
-                    res.carrier_phase_error = debugCarrierPhase;
-                    res.absolute_carrier_phase = absoluteCarrierPhase;
-                    res.doppler_hz = dF;
-                    res.prn = _prn;
-                    res.Pi = (double)block_Pi;
-                    res.Pq = (double)block_Pq;
-                    res.code_phase = _code_phase;
-                    res.snr = _snr;
-                    res.rollover_sample_idx = latchedRolloverSample;
-                    res.is_locked = _isLocked;
+        double fractionalCarrierPhase = ((double)_carrNco.getPhase() / 4294967296.0) * (2.0 * M_PI);
+        double absoluteCarrierPhase = ((double)_accumulatedCarrierCycles * (2.0 * M_PI)) + fractionalCarrierPhase;
 
-                    // 6. Clear accumulator data safely
-                    resetAccumulators(_acc);
-                    _msIntegrated = 0;
-                } // End of ms Integrated Loop
-            } // End of Gold Code Epoch Loop
-        } // Endo of sub-sample Loops
-    } // End of main array sample Loops
-    return res;
+        double finePhase = (double)_codeNco.getPhase() / 4294967296.0;
+        _code_phase = (double)_codeNco.getRotations() + finePhase;
+
+        float dF = (float)(_carrFreqBasis - _currentCommandedFreq);
+
+        res.carrier_phase_error = carrError;
+        res.absolute_carrier_phase = absoluteCarrierPhase;
+        res.doppler_hz = dF;
+        res.prn = _prn;
+        res.Pi = (double)I;
+        res.Pq = (double)Q;
+        res.code_phase = _code_phase;
+        res.snr = _snr;
+        res.rollover_sample_idx = latchedRolloverSample;
+        res.is_locked = _isLocked;
+
+        // Clear accumulators safely now that telemetry is generated
+        resetAccumulators(_acc);
+        _msIntegrated = 0;
+
+        return res;
+    }
+
+    // Fallback: If no epoch finished in this slice, return an invalid marker.
+    // Stale residual values stay untouched in _acc to overflow into the next call.
+    CorrelatorResult emptyRes = {};
+    emptyRes.epoch_valid = false;
+    return emptyRes;
 }

@@ -146,8 +146,6 @@ int main(int argc, char *argv[])
                         continue;
                     }
                 }
-
-                // 3. TRACKING PHASE (Steps through the 5ms buffer in five sequential 1ms iterations)
                 // 3. TRACKING PHASE (Steps through the 5ms buffer in five sequential 1ms iterations)
                 if (!activeChannels.empty())
                 {
@@ -163,6 +161,7 @@ int main(int argc, char *argv[])
                             // Feed exactly 1 ms of sample data to the tracking loop
                             CorrelatorResult res = state.processor->Correlator(ms_slice_ptr, samples_per_ms);
 
+                            if (res.epoch_valid) {
                             // Maintain continuous streaming time increments for the tracking NCO
                             uint64_t slice_sample_tick = meta.sample_tick + (ms_step * samples_per_ms);
                             t3 = get_timeData(meta.unix_time, slice_sample_tick, meta.fs_rate);
@@ -188,6 +187,7 @@ int main(int argc, char *argv[])
                                 fprintf(out, "?");
                             }
                             fprintf(out, "\n");
+                        }
                         }
                         total_data_time += (double)buffer_ms / 1000.0;
                     }
