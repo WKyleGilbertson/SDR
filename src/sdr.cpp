@@ -90,6 +90,7 @@ int main(int argc, char *argv[])
         const size_t samples_per_ms = (size_t)(meta.fs_rate / 1000.0);
         const size_t block_size = samples_per_ms * buffer_ms;
         std::vector<uint8_t> block(block_size);
+        int epochs_captured = 0;
 
         while (true)
         {
@@ -158,36 +159,55 @@ int main(int argc, char *argv[])
                             // Address pointer arithmetic to slice the 5ms block into sequential 1ms windows
                             uint8_t *ms_slice_ptr = block.data() + (ms_step * samples_per_ms);
 
+                            auto now = std::chrono::high_resolution_clock::now();
                             // Feed exactly 1 ms of sample data to the tracking loop
                             CorrelatorResult res = state.processor->Correlator(ms_slice_ptr, samples_per_ms);
 
-                            if (res.epoch_valid) {
-                            // Maintain continuous streaming time increments for the tracking NCO
-                            uint64_t slice_sample_tick = meta.sample_tick + (ms_step * samples_per_ms);
-                            t3 = get_timeData(meta.unix_time, slice_sample_tick, meta.fs_rate);
-
-                            // Write the timestamp using your safe string conversion method
-                            fprintf(out, "%s ", get_iso8601_timestamp(t3.unixSecond, t3.msCount).c_str());
-
-                            // Use built-in printing tool inside the focus loop
-                            printCorrelatorData(out, res);
-                            fprintf(out, "\n");
-
-                            // EXTRACT SINGLE COHERENT TRACKING SYMBOL FROM IN-PHASE ENERGY SIGN
-                            fprintf(out, " | Bits: ");
-
-                            // If the prompt energy is robust, use its raw sign as the true data bit symbol
-                            if (std::abs(res.Pi) > 1e+05)
+                            if (res.epoch_valid)
                             {
-                                fprintf(out, "%c", (res.Pi > 0) ? '#' : '-');
-                            }
-                            else
-                            {
-                                // If power is lost or drifting due to a cycle slip, flag it clearly
-                                fprintf(out, "?");
-                            }
-                            fprintf(out, "\n");
-                        }
+                                epochs_captured++;
+                                // auto duration = now.time_since_epoch();
+                                // auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+                                if (epochs_captured <= 300)
+                                {
+                                    // Maintain continuous streaming time increments for the tracking NCO
+                                    uint64_t slice_sample_tick = meta.sample_tick + (ms_step * samples_per_ms);
+                                    t3 = get_timeData(meta.unix_time, slice_sample_tick, meta.fs_rate);
+
+                                    // Write the timestamp using your safe string conversion method
+                                    fprintf(out, "%s ", get_iso8601_timestamp(t3.unixSecond, t3.msCount).c_str());
+
+                                    // Use built-in printing tool inside the focus loop
+                                    printCorrelatorData(out, res);
+                                    fprintf(out, "\n");
+
+                                    // EXTRACT SINGLE COHERENT TRACKING SYMBOL FROM IN-PHASE ENERGY SIGN
+                                    fprintf(out, " | Bits: ");
+
+                                    // If the prompt energy is robust, use its raw sign as the true data bit symbol
+                                    if (std::abs(res.Pi) > 1e+05)
+                                    {
+                                        fprintf(out, "%c", (res.Pi > 0) ? '#' : '-');
+                                    }
+                                    else
+                                    {
+                                        // If power is lost or drifting due to a cycle slip, flag it clearly
+                                        fprintf(out, "?");
+                                    }
+                                    fprintf(out, "\n");
+                                    if (epochs_captured == 300)
+                                    {
+                                        std::cout << "\n[*] 300 ms of data captured. Closing file." << std::endl;
+                                        fclose(out);
+                                        out = nullptr;
+                                    }
+                                }
+                                if (epochs_captured % 200 == 0)
+                                {
+                                    printCorrelatorData(stdout, res);
+                                    fprintf(stdout, "\r");
+                                }
+                            } // End res.epoch_valid
                         }
                         total_data_time += (double)buffer_ms / 1000.0;
                     }
@@ -208,6 +228,5 @@ int main(int argc, char *argv[])
         std::cerr << "\n[!] Unknown Error in SDR_test loop." << std::endl;
     }
 
-    fclose(out);
     return 0;
 }
