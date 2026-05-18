@@ -54,7 +54,7 @@ void ChannelProcessor::calculateSNR(Accumulators &acc, double &snr)
 }
 
 ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT sv)
-    : _fs(fs_rate), _carrNco(10, (float)fs_rate), _codeNco(0, (float)fs_rate), _m_sv(sv)
+    : _fs(fs_rate), _carrNco(8, (float)fs_rate), _codeNco(0, (float)fs_rate), _m_sv(sv)
 {
     _carrFreqBasis = 4.092e6f;
     _codeFreqBasis = 1.023e6f;
@@ -95,8 +95,8 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     for (int i = 0; i < 1023; i++)
         _ca_replica[i] = (int8_t)_m_sv.CODE[i];
 
-    _carrLF.Bn = 10.0f;
-    //_carrLF.Bn = 25.0f;
+    //_carrLF.Bn = 10.0f;
+    _carrLF.Bn = 25.0f;
     _carrLF.zeta = 0.707f;
     _carrLF.gain = 1.0f;
     _carrLF.omega_n = _carrLF.Bn * 8.0f * _carrLF.zeta / (4.0f * _carrLF.zeta * _carrLF.zeta + 1.0f);
@@ -146,8 +146,10 @@ CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
             }
 
             // Mix and accumulate EVERY sample continuously without dropping data
-            int32_t bb_i = (int32_t)(samp.i * (_carrNco.cosine(carrIdx) * 1024.0f));
-            int32_t bb_q = (int32_t)(samp.q * (_carrNco.sine(carrIdx) * 1024.0f));
+            //int32_t bb_i = (int32_t)(samp.i * (_carrNco.cosine(carrIdx) * 128.0f));
+            //int32_t bb_q = (int32_t)(samp.q * (_carrNco.sine(carrIdx) * 128.0f));
+            int16_t bb_i = (int16_t)(samp.i * (_carrNco.cosine(carrIdx) * 128.0f));
+            int16_t bb_q = (int16_t)(samp.q * (_carrNco.sine(carrIdx) * 128.0f));
 
             _acc.Ei += (bb_i * _codeNco.Early);
             _acc.Eq -= (bb_q * _codeNco.Early);
@@ -192,6 +194,7 @@ CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
 
         if (res.numSymbols < 32) {
             res.symbols[res.numSymbols++] = (_acc.Pi > 0) ? 1 : -1;
+            //res.symbols[res.numSymbols++] = ((_acc.Pi*_acc.Pq) > 0) ? 1 : -1;
         }
 
         float carrNcoUpdate = _oldCarrNco + (_carrLF.tau2 / _carrLF.tau1) * (carrError - _oldCarrError) + (carrError * (T / _carrLF.tau1));

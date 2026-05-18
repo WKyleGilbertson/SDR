@@ -40,7 +40,7 @@ class ChannelProcessor
 {
 public:
     // Default constructor so 'chan' can exist before acquisition
-    ChannelProcessor() : _fs(16368000.0), _carrNco(10, 16368000.0f),
+    ChannelProcessor() : _fs(16368000.0), _carrNco(8, 16368000.0f),
                          _codeNco(0, 16368000.0f), _code_phase(0), _m_sv(0, 0),
                          _sampleCounter(0) {}
     // The real constructor we use after lock
