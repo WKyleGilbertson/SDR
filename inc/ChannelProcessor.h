@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <vector>
+#include <cstdio>
 #include "NCO.h"
 #include "g2init.h"
 #include "L1IFUtil.hpp" // Has the bit unpacking

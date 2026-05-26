@@ -10,7 +10,7 @@
 
 #define CHUNK_SIZE 1024
 #define PAYLOAD_SIZE 1023
-#define FIFO_SIZE 65536 
+#define FIFO_SIZE 4096
 #define DEST_PORT "12345"
 #define SAMPLE_RATE 16368000 // 16.368 MHz
 

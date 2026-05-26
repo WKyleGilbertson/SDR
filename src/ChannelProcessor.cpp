@@ -112,6 +112,7 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
 }
 
 CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count) {
+    static uint32_t lastExitPhase = 0;
     const int target_integration_ms = 1;
     const float T = 0.001f * target_integration_ms;
     uint64_t latchedRolloverSample = 0;
@@ -119,6 +120,10 @@ CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
 
     // Track if a true 1ms epoch rollover occurred at any point during this slice
     bool epochTriggered = false;
+if (lastExitPhase !=0 && _carrNco.getPhase() != lastExitPhase) {
+   printf("!!! DISCONTINUITY DETECTED: Expected %u, Found %u\n", lastExitPhase, _carrNco.getPhase());
+} 
+//printf("[DEBUG] Entry PRN %d: CarrPhase=%u, CodePhase=%u\n", _prn, _carrNco.getPhase(), _codeNco.getPhase());
 
     for (size_t i = 0; i < count; ++i) {
         const UnpackEntry &entry = lut[data[i]];
@@ -235,6 +240,8 @@ CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
         resetAccumulators(_acc);
         _msIntegrated = 0;
 
+//        printf("[DEBUG] Exit PRN %d: dF=%.2f, CarrNCO=%.2f\n", _prn, _doppler_hz, _currentCommandedFreq);
+        lastExitPhase = _carrNco.getPhase();
         return res;
     }
 
@@ -242,5 +249,7 @@ CorrelatorResult ChannelProcessor::Correlator(const uint8_t *data, size_t count)
     // Stale residual values stay untouched in _acc to overflow into the next call.
     CorrelatorResult emptyRes = {};
     emptyRes.epoch_valid = false;
+//    printf("[DEBUG] Exit PRN %d: dF=%.2f, CarrNCO=%.2f\n", _prn, _doppler_hz, _currentCommandedFreq);
+        lastExitPhase = _carrNco.getPhase();
     return emptyRes;
 }
