@@ -7,6 +7,14 @@
 #include "g2init.h"
 #include "L1IFUtil.hpp" // Has the bit unpacking
 #include "PCSEngine.hpp" // This defines AcqResult
+
+struct RawSample {
+    int8_t i; // Raw unscaled I value directly from MAX2769
+    int8_t q; // Raw unscaled Q value directly from MAX2769
+    uint64_t sample_tick; // Inherited directly from meta.sample_tick
+    uint32_t unix_time;
+};
+
 struct CorrelatorResult {
     int prn;
     double Pi;
@@ -17,10 +25,12 @@ struct CorrelatorResult {
     double doppler_hz;
     double snr;
     uint64_t rollover_sample_idx;
+    uint32_t unix_time;
     bool is_locked;
   bool epoch_valid;
   int8_t symbols[32];
   int numSymbols;
+  size_t consumed_sample_count; // Number of samples consumed from the input buffer for this epoch's processing
 };
 struct LoopFilter
 {
@@ -47,7 +57,8 @@ public:
     // The real constructor we use after lock
     ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT sv);
     //CorrRes process(const uint8_t *data, size_t count);
-    CorrelatorResult Correlator(const uint8_t *data, size_t count);
+    //CorrelatorResult Correlator(const uint8_t *data, size_t count);
+    CorrelatorResult Correlator(const RawSample *samples, size_t available_samples);
     int getPRN() const { return _prn; }
     bool isLocked() const { return _isLocked; }
     float getSNR() const { return (float)_snr; }

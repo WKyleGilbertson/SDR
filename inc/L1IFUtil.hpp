@@ -17,6 +17,7 @@ struct TimeTrio {
 
 TimeTrio get_timeData(uint32_t unixSeconds, uint32_t sampleTick, uint32_t Fs);
 
+
 /**
  * L1IFStream Bit Unpacking (MAX2769 bit-packed format)
  * =========================================================
