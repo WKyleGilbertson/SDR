@@ -96,8 +96,8 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     for (int i = 0; i < 1023; i++)
         _ca_replica[i] = (int8_t)_m_sv.CODE[i];
 
-    //_carrLF.Bn = 10.0f;
-    _carrLF.Bn = 25.0f;
+    _carrLF.Bn = 10.0f;
+    //_carrLF.Bn = 25.0f;
     _carrLF.zeta = 0.707f;
     _carrLF.gain = 1.0f;
     _carrLF.omega_n = _carrLF.Bn * 8.0f * _carrLF.zeta / (4.0f * _carrLF.zeta * _carrLF.zeta + 1.0f);
@@ -112,8 +112,10 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     _codeLF.tau2 = 2.0f * _codeLF.zeta / _codeLF.omega_n;
 }
 
-CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t availableSamples) {
-    if (availableSamples == 0 || samples == nullptr) {
+CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t availableSamples)
+{
+    if (availableSamples == 0 || samples == nullptr)
+    {
         CorrelatorResult emptyRes = {};
         emptyRes.epoch_valid = false;
         emptyRes.consumed_sample_count = 0;
@@ -124,7 +126,8 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
     size_t i = 0;
 
     // 1. Process the exact 16,368 sample block sequentially
-    for (i = 0; i < availableSamples; ++i) {
+    for (i = 0; i < availableSamples; ++i)
+    {
         _sampleCounter++;
 
         uint32_t carrIdx = _carrNco.clk();
@@ -143,7 +146,8 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
         _acc.Lq -= (bb_q * _codeNco.Late);
 
         // Track rotations naturally across the 1ms block
-        if (_codeNco.getRotations() < oldCodeRotations) {
+        if (_codeNco.getRotations() < oldCodeRotations)
+        {
             epochTriggered = true;
         }
     }
@@ -151,39 +155,45 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
     // Every discrete 16,368 block represents a complete tracking epoch update step
     CorrelatorResult res = {};
     res.numSymbols = 0;
-    res.epoch_valid = true; 
+    res.epoch_valid = true;
     res.consumed_sample_count = availableSamples; // Consume all 16,368 samples safely
     res.rollover_sample_idx = samples[availableSamples - 1].sample_tick;
     res.unix_time = samples[availableSamples - 1].unix_time;
 
-    // 2. FIXED DETACHED LAYER: Create local, normalized variables 
+    // 2. FIXED DETACHED LAYER: Create local, normalized variables
     // exclusively for the square root power equations to protect bit precision.
     float norm = 1.0f / 16368.0f;
     float I = (float)_acc.Pi * norm;
     float Q = (float)_acc.Pq * norm;
-    
-    float Early_I  = (float)_acc.Ei * norm;
-    float Early_Q  = (float)_acc.Eq * norm;
-    float Late_I   = (float)_acc.Li * norm;
-    float Late_Q   = (float)_acc.Lq * norm;
+
+    float Early_I = (float)_acc.Ei * norm;
+    float Early_Q = (float)_acc.Eq * norm;
+    float Late_I = (float)_acc.Li * norm;
+    float Late_Q = (float)_acc.Lq * norm;
 
     float dynamicT = 0.001f; // Perfect 1 ms step size
 
     float totalPower = (I * I) + (Q * Q);
     float carrError = (totalPower > 1e-6f) ? ((I * Q) / totalPower) : 0.0f;
-    
+    // PHASE LOCK GUARD: If the carrier error jumps violently across the 1ms boundary,
+    // damp it down to prevent the phase from flipping 180 degrees instantly.
+    if (fabs(carrError - _oldCarrError) > 0.5f)
+    {
+        carrError = _oldCarrError + (carrError * 0.1f);
+    }
     // Use the normalized components to calculate Early and Late tracking power precisely
     float E = sqrtf((Early_I * Early_I) + (Early_Q * Early_Q));
     float L = sqrtf((Late_I * Late_I) + (Late_Q * Late_Q));
     float P = sqrtf(totalPower);
-    
+
     // This will now compute precisely without clipping or rounding down to 0.000000
     float codeError = (P > 1e-6f) ? ((E - L) / (2.0f * P)) : 0.0f;
 
     calculateSNR(_acc, _snr);
     _isLocked = (_snr > 12.0f);
 
-    if (res.numSymbols < 32) {
+    if (res.numSymbols < 32)
+    {
         res.symbols[res.numSymbols++] = (I > 0.0f) ? 1 : -1;
     }
 
@@ -205,11 +215,11 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
     res.absolute_carrier_phase = ((double)_accumulatedCarrierCycles * (2.0 * M_PI)) + (((double)_carrNco.getPhase() / 4294967296.0) * (2.0 * M_PI));
     res.doppler_hz = (float)(_carrFreqBasis - _currentCommandedFreq);
     res.prn = _prn;
-    
+
     // Pass authentic full-scale unattenuated counts back to logging infrastructure
-    res.Pi = (double)_acc.Pi; 
+    res.Pi = (double)_acc.Pi;
     res.Pq = (double)_acc.Pq;
-    
+
     res.code_phase = (double)_codeNco.getRotations() + ((double)_codeNco.getPhase() / 4294967296.0);
     res.snr = _snr;
     res.is_locked = _isLocked;
