@@ -11,7 +11,7 @@
 struct RawSample {
     int8_t i; // Raw unscaled I value directly from MAX2769
     int8_t q; // Raw unscaled Q value directly from MAX2769
-    uint64_t sample_tick; // Inherited directly from meta.sample_tick
+    uint32_t sample_tick; // Inherited directly from meta.sample_tick
     uint32_t unix_time;
 };
 
@@ -69,6 +69,7 @@ private:
     G2INIT _m_sv;
     size_t _samplesPerMs;
     uint8_t _msIntegrated = 0;
+    uint16_t _epochSampleCounter = 0;
     // Loop Filter State from TrkBST.cpp
     float _carrFreqBasis;
     float _codeFreqBasis;

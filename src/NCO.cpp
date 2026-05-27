@@ -5,7 +5,8 @@
 
 NCO::NCO(const int lgtblsize, const float m_sample_clk)
 {
-    SAMPLE_RATE = m_sample_clk;
+    //SAMPLE_RATE = m_sample_clk;
+    this->m_sample_clk = m_sample_clk;
     // We'll use a table 2^(lgtblize) in length.  This is non-negotiable, as the
     // rest of this algorithm depends upon this property.
     m_lglen = lgtblsize;
@@ -41,8 +42,11 @@ NCO::~NCO(void)
 
 void NCO::SetFrequency(float f)
 {
-    m_dphase = (int)(f * ONE_ROTATION / SAMPLE_RATE);
-    Frequency = f;
+     // Cast explicitly to uint32_t to match the class property definition
+//    m_dphase = (uint32_t)(f * 4294967296.0f / m_sample_clk);   
+    //m_dphase = static_cast<uint32_t>((double)f * m_ONE_ROTATION / m_sample_clk);
+    m_dphase = (int32_t)(f * m_ONE_ROTATION / m_sample_clk);
+    m_frequency = f;
 }
 
 void NCO::RakeSpacing(CorrelatorSpacing cs)

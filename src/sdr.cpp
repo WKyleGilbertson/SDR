@@ -27,8 +27,7 @@ struct ChannelState
     uint64_t totalSamplesPushed = 0;
     uint64_t totalSamplesConsumed = 0;
     uint64_t total_tracked_ms = 0;
-
-    uint64_t handover_sample_tick = 0;
+    uint32_t handover_sample_tick = 0;
     uint32_t handover_unix_time = 0;
 
     bool isActive() const { return processor != nullptr; }
@@ -47,6 +46,28 @@ struct ChannelState
     }
 };
 
+void stuffFIFO(std::deque<RawSample> &fifo, const uint8_t *data, size_t count, uint32_t base_sample_tick, uint32_t unix_time)
+{
+    const UnpackEntry *lut = GetLUT_FNHN();
+    for (size_t i = 0; i < count; ++i)
+    {
+        const UnpackEntry &entry = lut[data[i]];
+        RawSample s0;
+        s0.i = static_cast<int8_t>(entry.s0.i);
+        s0.q = static_cast<int8_t>(entry.s0.q);
+        s0.sample_tick = base_sample_tick + (i * 2);
+        s0.unix_time = unix_time;
+        fifo.push_back(s0);
+
+        RawSample s1;
+        s1.i = static_cast<int8_t>(entry.s1.i);
+        s1.q = static_cast<int8_t>(entry.s1.q);
+        s1.sample_tick = base_sample_tick + (i * 2) + 1;
+        s1.unix_time = unix_time;
+        fifo.push_back(s1);
+    }
+}
+
 int main(int argc, char *argv[])
 {
     FILE *out = fopen("output.bin", "wb");
@@ -55,16 +76,13 @@ int main(int argc, char *argv[])
         std::cerr << "[!] Failed to open output file." << std::endl;
         return -1;
     }
-
     versionInfo v;
     v.printVersion();
     RFE_Header_t meta = {};
     TimeTrio t3;
     std::list<ChannelState> activeChannels;
 
-    // Master receiver initialization state tracking layer
     ChannelState rxState(0, 16368000.0, AcqResult(), G2INIT());
-
     auto system_start = std::chrono::steady_clock::now();
     uint32_t focusPRN = 131;
     if (argc > 1)
@@ -80,7 +98,6 @@ int main(int argc, char *argv[])
             fclose(out);
             return -1;
         }
-
         std::cout << "[*] Waiting for stream telemetry..." << std::endl;
         std::vector<uint8_t> startup_buffer(8184);
         if (!rx.get_ms_blocks(startup_buffer.data(), meta, 1))
@@ -96,7 +113,6 @@ int main(int argc, char *argv[])
         auto start_wall = std::chrono::steady_clock::now();
         double total_data_time = 0;
         bool first = true;
-
         const int buffer_ms = 5;
         const size_t samples_per_ms = (size_t)(meta.fs_rate / 1000.0);
         const size_t block_size = samples_per_ms * buffer_ms;
@@ -114,34 +130,16 @@ int main(int argc, char *argv[])
                     first = false;
                 }
 
-                // FIXED: Cleaned and flattened unscaled conversion sweep loop metrics
-                const UnpackEntry *lut = GetLUT_FNHN();
-                uint64_t tick0 = 0;
-                uint64_t tick1 = 0;
-
-                for (size_t i = 0; i < block_size; ++i)
-                {
-                    const UnpackEntry &entry = lut[block[i]];
-
-                    tick0 = meta.sample_tick + (i * 2);
-                    tick1 = meta.sample_tick + (i * 2) + 1;
-
-                    RawSample s0 = {static_cast<int8_t>(entry.s0.i), static_cast<int8_t>(entry.s0.q), tick0, meta.unix_time};
-                    rxState.sampleFIFO.push_back(s0);
-                    rxState.totalSamplesPushed++;
-
-                    RawSample s1 = {static_cast<int8_t>(entry.s1.i), static_cast<int8_t>(entry.s1.q), tick1, meta.unix_time};
-                    rxState.sampleFIFO.push_back(s1);
-                    rxState.totalSamplesPushed++;
-                }
+                stuffFIFO(rxState.sampleFIFO, block.data(), block_size, meta.sample_tick, meta.unix_time);
+                rxState.totalSamplesPushed += block_size * 2;
 
                 // STEP 4: ACQUISITION PHASE
                 if (acq_needed)
                 {
                     auto results = acqMgr.run(meta, block.data());
                     t3 = get_timeData(meta.unix_time, meta.sample_tick, meta.fs_rate);
-                    printf("[*] Starting Acquisition on unified stream chunk... %s\n",
-                           get_iso8601_timestamp(t3.unixSecond, t3.msCount).c_str());
+                    printf("[*] Starting Acquisition on unified stream chunk... %s\n", get_iso8601_timestamp(t3.unixSecond, t3.msCount).c_str());
+
                     if (!results.empty())
                     {
                         activeChannels.clear();
@@ -153,7 +151,6 @@ int main(int argc, char *argv[])
                                 activeChannels.emplace_back(res.prn, (double)meta.fs_rate, res, pcs.getSV(res.prn));
                                 activeChannels.back().decoder->setFocus(true);
 
-                                // Seeding baseline pipeline variables across handover
                                 auto &state = activeChannels.front();
                                 state.sampleFIFO = std::move(rxState.sampleFIFO);
                                 state.totalSamplesPushed = rxState.totalSamplesPushed;
@@ -168,6 +165,7 @@ int main(int argc, char *argv[])
                                 printf(" LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f\n", res.prn, res.snr, res.bin, res.codePhase);
                             }
                         }
+
                         if (!acq_needed)
                         {
                             printf("[*] HANDOVER SUCCESS: Unscaled pipeline tracking active.\n");
@@ -190,12 +188,12 @@ int main(int argc, char *argv[])
                 }
 
                 // STEP 5 & 6: PIPELINE TRACKING MULTIPLEXER LAYER
+                // Inside sdr.cpp master pipeline tracking layer:
                 if (!activeChannels.empty())
                 {
                     auto &state = activeChannels.front();
                     if (state.prn == (int)focusPRN)
                     {
-
                         if (&state != &rxState && !rxState.sampleFIFO.empty())
                         {
                             state.sampleFIFO.insert(state.sampleFIFO.end(), rxState.sampleFIFO.begin(), rxState.sampleFIFO.end());
@@ -203,51 +201,33 @@ int main(int argc, char *argv[])
                             rxState.resetPipelines();
                         }
 
-                        bool epochsAvailable = true;
-                        while (epochsAvailable && !state.sampleFIFO.empty())
+                        // FIXED: Step through the FIFO in perfect, discrete 1ms blocks (16,368 samples)
+                        while (state.sampleFIFO.size() >= 16368)
                         {
-                            std::vector<RawSample> flatSlice(state.sampleFIFO.begin(), state.sampleFIFO.end());
+
+                            // Carve out exactly 16,368 sequential samples
+                            std::vector<RawSample> flatSlice(state.sampleFIFO.begin(), state.sampleFIFO.begin() + 16368);
+
                             CorrelatorResult res = state.processor->Correlator(flatSlice.data(), flatSlice.size());
 
-                            if (res.epoch_valid && res.consumed_sample_count > 0)
+                            if (res.consumed_sample_count > 0)
+                            {
+                                state.totalSamplesConsumed += res.consumed_sample_count;
+                                state.sampleFIFO.erase(state.sampleFIFO.begin(), state.sampleFIFO.begin() + res.consumed_sample_count);
+                            }
+
+                            if (res.epoch_valid)
                             {
                                 epochs_captured++;
-                                state.totalSamplesConsumed += res.consumed_sample_count;
+                                uint32_t currentBlockMsOffset = (state.handover_sample_tick / 16368) % 1000;
+                                uint64_t dynamicMsCounter = currentBlockMsOffset + state.total_tracked_ms;
+                                uint64_t preciseSampleTick = (uint64_t)(dynamicMsCounter * 16368);
 
-                                // Discard precisely what was tracked out of the FIFO queue
-                                state.sampleFIFO.erase(state.sampleFIFO.begin(), state.sampleFIFO.begin() + res.consumed_sample_count);
-                             //   state.decoder->processTrackingMetrics(res);
-
-                                if (out && epochs_captured <= 12000)
-                                {
-
-                                    // 1. Calculate the current epoch's millisecond offset inside the block
-                                    // based on the unshifted hardware block snapshot timing data
-                                    uint32_t currentBlockMsOffset = (state.handover_sample_tick / 16368) % 1000;
-
-                                    // 2. Compute the smooth, sequential millisecond tick count
-                                    uint64_t dynamicMsCounter = currentBlockMsOffset + state.total_tracked_ms;
-
-                                    // 3. Construct a precise, sample-accurate hardware tracking tick
-                                    uint64_t preciseSampleTick = (uint64_t)(dynamicMsCounter * 16368);
-
-                                    // Extract the calendar date and millisecond tracking step increments cleanly
-                                    t3 = get_timeData(state.handover_unix_time, preciseSampleTick, 16368000.0);
-
-                                    fprintf(out, "%s ", get_iso8601_timestamp(t3.unixSecond, t3.msCount).c_str());
-                                    printCorrelatorData(out, res);
-                                    fprintf(out, " | Bits: %c\n", (res.Pi > 0) ? '#' : '-');
-
-                                    // 4. CRITICAL STEP: Increment the persistent tracking timeline
-                                    state.total_tracked_ms++;
-
-                                    if (epochs_captured == 12000)
-                                    {
-                                        std::cout << "\n[*] 12 seconds captured. Closing file." << std::endl;
-                                        fclose(out);
-                                        out = nullptr;
-                                    }
-                                }
+                                t3 = get_timeData(state.handover_unix_time, preciseSampleTick, 16368000.0);
+                                fprintf(out, "%s ", get_iso8601_timestamp(t3.unixSecond, t3.msCount).c_str());
+                                printCorrelatorData(out, res);
+                                fprintf(out, " | Bits: %c\n", (res.Pi > 0) ? '#' : '-');
+                                state.total_tracked_ms++;
 
                                 if (epochs_captured % 100 == 0)
                                 {
@@ -256,11 +236,7 @@ int main(int argc, char *argv[])
                                     fflush(stdout);
                                 }
                             }
-                            else
-                            {
-                                epochsAvailable = false;
-                            }
-                        } // End while epochsAvailable
+                        } // End while
 
                         total_data_time += (double)buffer_ms / 1000.0;
                     }
@@ -270,7 +246,7 @@ int main(int argc, char *argv[])
             {
                 std::this_thread::sleep_for(std::chrono::microseconds(500));
             }
-        } // end while true
+        } // End while true
     }
     catch (const std::exception &e)
     {

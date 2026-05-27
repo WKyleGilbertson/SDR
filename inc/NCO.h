@@ -14,8 +14,6 @@ enum CorrelatorSpacing {halfChip, Narrow};
 
 class NCO {
 public:
-    const float ONE_ROTATION = (float) 2.0 * (1u << 31);
-    float SAMPLE_RATE, Frequency = 0.0;
     int8_t Early = 0, Prompt = 0, Late = 0;
     int8_t superEarly = 0, superLate = 0;
     NCO(const int lgtblsize, const float m_sample_clk);
@@ -31,13 +29,14 @@ public:
     uint32_t getMask() const {return m_mask;}
     void NCO::InitializeEPLPipeline(double initialCodePhase, int chipTravelDelay);
 private:
+    const float m_ONE_ROTATION = (float) 2.0 * (1u << 31);
     uint32_t m_lglen, m_len, m_mask, m_phase, m_dphase, m_bias, idx;
     uint16_t m_rotations = 0;
     uint64_t EPLreg = 0ULL;
     int8_t CACODE[1023];
     float * m_sintable = nullptr;
     float * m_costable = nullptr;
-    float m_sample_clk;
+    float m_sample_clk, m_frequency;
     uint64_t E_mask, P_mask, L_mask, SE_mask, SL_mask;
     uint8_t shift;
 };
