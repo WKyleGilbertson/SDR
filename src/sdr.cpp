@@ -169,7 +169,16 @@ int main(int argc, char *argv[])
                         if (!acq_needed)
                         {
                             printf("[*] HANDOVER SUCCESS: Unscaled pipeline tracking active.\n");
+                            rxState.resetPipelines(); // Maybe not?
                             rx.jump_to_latest_epoch();
+                            // CRITICAL FIX: Update the base tracking timeline parameters immediately
+                            // to match the stream state after skipping network frames.
+                            if (!activeChannels.empty())
+                            {
+                                auto &state = activeChannels.front();
+                                state.handover_sample_tick = meta.sample_tick;
+                                state.handover_unix_time = meta.unix_time;
+                            }
                             continue;
                         }
                         else
@@ -187,13 +196,14 @@ int main(int argc, char *argv[])
                     }
                 }
 
-                // STEP 5 & 6: PIPELINE TRACKING MULTIPLEXER LAYER
-                // Inside sdr.cpp master pipeline tracking layer:
+                // STEP 5 & 6: SMOOTHED 1MS DISCRETE STREAM MULTIPLEXER (NO DUPLICATION)
                 if (!activeChannels.empty())
                 {
                     auto &state = activeChannels.front();
                     if (state.prn == (int)focusPRN)
                     {
+
+                        // Append fresh 5ms chunks to the smoothing FIFO buffer
                         if (&state != &rxState && !rxState.sampleFIFO.empty())
                         {
                             state.sampleFIFO.insert(state.sampleFIFO.end(), rxState.sampleFIFO.begin(), rxState.sampleFIFO.end());
@@ -201,11 +211,9 @@ int main(int argc, char *argv[])
                             rxState.resetPipelines();
                         }
 
-                        // FIXED: Step through the FIFO in perfect, discrete 1ms blocks (16,368 samples)
+                        // STEP 5 & 6: SMOOTHED PASS-THROUGH TELEMETRY MULTIPLEXER
                         while (state.sampleFIFO.size() >= 16368)
                         {
-
-                            // Carve out exactly 16,368 sequential samples
                             std::vector<RawSample> flatSlice(state.sampleFIFO.begin(), state.sampleFIFO.begin() + 16368);
 
                             CorrelatorResult res = state.processor->Correlator(flatSlice.data(), flatSlice.size());
@@ -215,27 +223,63 @@ int main(int argc, char *argv[])
                                 state.totalSamplesConsumed += res.consumed_sample_count;
                                 state.sampleFIFO.erase(state.sampleFIFO.begin(), state.sampleFIFO.begin() + res.consumed_sample_count);
                             }
+                            else
+                            {
+                                state.sampleFIFO.erase(state.sampleFIFO.begin(), state.sampleFIFO.begin() + 16368);
+                            }
 
+                            // CRITICAL FIX: Always update the core clock state on every single block
+                            // to maintain synchronicity with incoming network telemetry frames
+                            t3 = get_timeData(res.unix_time, res.rollover_sample_idx, meta.fs_rate);
+
+                            // LOG THROTTLE: Only print a row when the correlator crosses a true code boundary
+                            if (res.epoch_valid) {
+    epochs_captured++;
+    
+    // 1. Calculate the absolute continuous milliseconds that have elapsed since handover
+    uint64_t total_samples_tracked = state.totalSamplesConsumed;
+    uint64_t continuous_ms_elapsed = (uint64_t)std::round((double)total_samples_tracked * 1000.0 / meta.fs_rate);
+    
+    // 2. Compute a continuous time baseline from the initial handover values
+    uint64_t absolute_starting_ms = ((uint64_t)state.handover_unix_time * 1000);
+    uint64_t current_absolute_ms  = absolute_starting_ms + continuous_ms_elapsed;
+    
+    // 3. Separate the components cleanly to prevent any backward timeline shifts
+    t3.unixSecond = current_absolute_ms / 1000;
+    t3.msCount    = current_absolute_ms % 1000;
+    
+    // Log the synchronized tracking metrics cleanly
+    fprintf(out, "%s ", get_iso8601_timestamp(t3.unixSecond, t3.msCount).c_str());
+    printCorrelatorData(out, res);
+    fprintf(out, " | Bits: %c\n", (res.Pi > 0) ? '#' : '-');
+    
+    state.total_tracked_ms++;
+
+    if (epochs_captured % 100 == 0) {
+        printCorrelatorData(stdout, res);
+        fprintf(stdout, "\r");
+        fflush(stdout);
+    }
+}
+
+                            /*
                             if (res.epoch_valid)
                             {
                                 epochs_captured++;
-                                uint32_t currentBlockMsOffset = (state.handover_sample_tick / 16368) % 1000;
-                                uint64_t dynamicMsCounter = currentBlockMsOffset + state.total_tracked_ms;
-                                uint64_t preciseSampleTick = (uint64_t)(dynamicMsCounter * 16368);
 
-                                t3 = get_timeData(state.handover_unix_time, preciseSampleTick, 16368000.0);
                                 fprintf(out, "%s ", get_iso8601_timestamp(t3.unixSecond, t3.msCount).c_str());
                                 printCorrelatorData(out, res);
                                 fprintf(out, " | Bits: %c\n", (res.Pi > 0) ? '#' : '-');
+
                                 state.total_tracked_ms++;
 
                                 if (epochs_captured % 100 == 0)
                                 {
                                     printCorrelatorData(stdout, res);
-                                    fprintf(stdout, "\n");
+                                    fprintf(stdout, "\r");
                                     fflush(stdout);
                                 }
-                            }
+                            } */
                         } // End while
 
                         total_data_time += (double)buffer_ms / 1000.0;

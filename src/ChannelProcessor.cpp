@@ -54,8 +54,7 @@ void ChannelProcessor::calculateSNR(Accumulators &acc, double &snr)
 }
 
 ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT sv)
-    //    : _fs(fs_rate), _carrNco(8, (float)fs_rate), _codeNco(0, (float)fs_rate), _m_sv(sv)
-    : _fs(fs_rate), _carrNco(8, (float)fs_rate), _codeNco(8, (float)fs_rate), _m_sv(sv)
+    : _fs(fs_rate), _carrNco(8, (float)fs_rate), _codeNco(0, (float)fs_rate), _m_sv(sv)
 {
     _carrFreqBasis = 4.092e6f;
     _codeFreqBasis = 1.023e6f;
@@ -155,7 +154,8 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
     // Every discrete 16,368 block represents a complete tracking epoch update step
     CorrelatorResult res = {};
     res.numSymbols = 0;
-    res.epoch_valid = true;
+    //res.epoch_valid = true;
+    res.epoch_valid = epochTriggered; // Only consider it valid if we actually triggered a code rotation boundary within the block
     res.consumed_sample_count = availableSamples; // Consume all 16,368 samples safely
     res.rollover_sample_idx = samples[availableSamples - 1].sample_tick;
     res.unix_time = samples[availableSamples - 1].unix_time;
