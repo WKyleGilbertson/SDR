@@ -27,6 +27,8 @@ public:
     uint32_t getPhase() const {return m_phase;}
     uint32_t getRotations() const {return m_rotations;}
     uint32_t getMask() const {return m_mask;}
+    //void setPhase(uint32_t p) { m_phase = p & m_mask; }
+    void setPhase(uint32_t p) { m_phase = p; }
     void NCO::InitializeEPLPipeline(double initialCodePhase, int chipTravelDelay);
 private:
     const float m_ONE_ROTATION = (float) 2.0 * (1u << 31);

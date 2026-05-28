@@ -121,16 +121,30 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
         return emptyRes;
     }
 
+    static uint32_t persistent_carrier_phase = 0;
+    static uint32_t persistent_code_phase = 0;
+    static bool phase_context_initialized = false;
+
+    if (phase_context_initialized)
+    {
+        _carrNco.setPhase(persistent_carrier_phase);
+        _codeNco.setPhase(persistent_code_phase);
+    }
+    else
+    {
+        phase_context_initialized = true;
+    }
+
     bool epochTriggered = false;
     size_t i = 0;
 
-    // 1. Process the exact 16,368 sample block sequentially
+    // 1. Core Mixing Pipeline (NCO phase handles tracking step accumulation naturally)
     for (i = 0; i < availableSamples; ++i)
     {
         _sampleCounter++;
-
         uint32_t carrIdx = _carrNco.clk();
         uint32_t oldCodeRotations = _codeNco.getRotations();
+
         _codeNco.clk();
 
         // NATIVE MIXING: Use raw int8_t data straight from the pointer matrix array
@@ -144,49 +158,56 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
         _acc.Li += (bb_i * _codeNco.Late);
         _acc.Lq -= (bb_q * _codeNco.Late);
 
-        // Track rotations naturally across the 1ms block
         if (_codeNco.getRotations() < oldCodeRotations)
         {
             epochTriggered = true;
         }
     }
 
-    // Every discrete 16,368 block represents a complete tracking epoch update step
     CorrelatorResult res = {};
     res.numSymbols = 0;
-    //res.epoch_valid = true;
-    res.epoch_valid = epochTriggered; // Only consider it valid if we actually triggered a code rotation boundary within the block
-    res.consumed_sample_count = availableSamples; // Consume all 16,368 samples safely
+    res.epoch_valid = epochTriggered;
+    res.consumed_sample_count = availableSamples;
+
     res.rollover_sample_idx = samples[availableSamples - 1].sample_tick;
     res.unix_time = samples[availableSamples - 1].unix_time;
 
-    // 2. FIXED DETACHED LAYER: Create local, normalized variables
-    // exclusively for the square root power equations to protect bit precision.
-    float norm = 1.0f / 16368.0f;
+    // 2. FIXED DETACHED LAYER: Compute loop filters
+    float norm = 1.0f / (float)availableSamples;
     float I = (float)_acc.Pi * norm;
     float Q = (float)_acc.Pq * norm;
-
     float Early_I = (float)_acc.Ei * norm;
     float Early_Q = (float)_acc.Eq * norm;
     float Late_I = (float)_acc.Li * norm;
     float Late_Q = (float)_acc.Lq * norm;
 
-    float dynamicT = 0.001f; // Perfect 1 ms step size
-
+    float dynamicT = 0.001f; // Perfect 1 ms tracking interval steps
     float totalPower = (I * I) + (Q * Q);
-    float carrError = (totalPower > 1e-6f) ? ((I * Q) / totalPower) : 0.0f;
-    // PHASE LOCK GUARD: If the carrier error jumps violently across the 1ms boundary,
-    // damp it down to prevent the phase from flipping 180 degrees instantly.
-    if (fabs(carrError - _oldCarrError) > 0.5f)
-    {
+
+    // =================================================================
+    // FIX: RADIANS-NORMALIZED SINGLE-QUADRANT ATANF DISCRIMINATOR
+    // =================================================================
+    // 1. Strip out the data navigation message BPSK bits
+    float sign_I  = (I >= 0.0f) ? 1.0f : -1.0f;
+    float clean_I = I * sign_I;
+    float clean_Q = Q * sign_I;
+
+    // 2. Calculate the raw phase tracking error using the single-argument tangent lookup
+    float raw_angular_error = (clean_I > 1e-6f) ? atanf(clean_Q / clean_I) : 0.0f;
+
+    // 3. SCALE TO RADIANS: Normalize the angular output relative to PI to prevent 
+    // the loop filter coefficients from overcorrecting at block boundaries.
+    float carrError = raw_angular_error / (float)M_PI;
+
+    // Keep your standard phase lock guard to suppress high-frequency noise spikes
+    if (fabs(carrError - _oldCarrError) > 0.5f) {
         carrError = _oldCarrError + (carrError * 0.1f);
     }
-    // Use the normalized components to calculate Early and Late tracking power precisely
+    // =================================================================
     float E = sqrtf((Early_I * Early_I) + (Early_Q * Early_Q));
     float L = sqrtf((Late_I * Late_I) + (Late_Q * Late_Q));
     float P = sqrtf(totalPower);
 
-    // This will now compute precisely without clipping or rounding down to 0.000000
     float codeError = (P > 1e-6f) ? ((E - L) / (2.0f * P)) : 0.0f;
 
     calculateSNR(_acc, _snr);
@@ -197,7 +218,7 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
         res.symbols[res.numSymbols++] = (I > 0.0f) ? 1 : -1;
     }
 
-    // 3. Loop filters execute using full-scale energy metrics
+    // 3. Loop Filter Updates with Controlled Damping
     float carrNcoUpdate = _oldCarrNco + (_carrLF.tau2 / _carrLF.tau1) * (carrError - _oldCarrError) + (carrError * (dynamicT / _carrLF.tau1));
     _oldCarrNco = carrNcoUpdate;
     _oldCarrError = carrError;
@@ -206,20 +227,24 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
     float codeNcoUpdate = _oldCodeNco + (_codeLF.tau2 / _codeLF.tau1) * (codeError - _oldCodeError) + (codeError * (dynamicT / _codeLF.tau1));
     _oldCodeNco = codeNcoUpdate;
     _oldCodeError = codeError;
+
     _currentCommandedFreq = carrNcoUpdate;
 
+    // RESTORATION FIX: Update the target frequencies directly.
+    // This allows the internal NCO phases to persist naturally across 5 ms blocks.
     _carrNco.SetFrequency(_currentCommandedFreq);
     _codeNco.SetFrequency(_codeFreqBasis + codeNcoUpdate + ((float)_doppler_hz / 1540.0f));
+
+    persistent_carrier_phase = _carrNco.getPhase();
+    persistent_code_phase = _codeNco.getPhase();
 
     res.carrier_phase_error = carrError;
     res.absolute_carrier_phase = ((double)_accumulatedCarrierCycles * (2.0 * M_PI)) + (((double)_carrNco.getPhase() / 4294967296.0) * (2.0 * M_PI));
     res.doppler_hz = (float)(_carrFreqBasis - _currentCommandedFreq);
     res.prn = _prn;
 
-    // Pass authentic full-scale unattenuated counts back to logging infrastructure
     res.Pi = (double)_acc.Pi;
     res.Pq = (double)_acc.Pq;
-
     res.code_phase = (double)_codeNco.getRotations() + ((double)_codeNco.getPhase() / 4294967296.0);
     res.snr = _snr;
     res.is_locked = _isLocked;
