@@ -76,16 +76,17 @@ int main(int argc, char *argv[])
         std::cerr << "[!] Failed to open output file." << std::endl;
         return -1;
     }
+
     versionInfo v;
     v.printVersion();
     RFE_Header_t meta = {};
     TimeTrio t3;
     std::list<ChannelState> activeChannels;
-
     ChannelState rxState(0, 16368000.0, AcqResult(), G2INIT());
+
     auto system_start = std::chrono::steady_clock::now();
     uint32_t focusPRN = 131;
-    if (argc > 1)
+    if (argc > 1 && argv[1] != nullptr)
     {
         focusPRN = (uint32_t)atoi(argv[1]);
     }
@@ -98,6 +99,7 @@ int main(int argc, char *argv[])
             fclose(out);
             return -1;
         }
+
         std::cout << "[*] Waiting for stream telemetry..." << std::endl;
         std::vector<uint8_t> startup_buffer(8184);
         if (!rx.get_ms_blocks(startup_buffer.data(), meta, 1))
@@ -119,13 +121,13 @@ int main(int argc, char *argv[])
         std::vector<uint8_t> block(block_size);
         int epochs_captured = 0;
 
+        std::cout << "[*] Starting real-time hardware tracking loop..." << std::endl;
+
         while (true)
         {
-            // STEP 3: STREAM INGESTION (EXHAUST ALL AVAILABLE SOCKET CORES)
-            // STEP 3: NON-BLOCKING BOUNDED SOCKET INGESTION (PREVENTS BAD ALLOCATION)
             int blocks_pulled_this_cycle = 0;
 
-            // Drain up to 5 blocks (25ms of data) maximum per main loop pass
+            // 1. NETWORK INGEST: Pull incoming UDP blocks directly into the global rxState FIFO
             while (blocks_pulled_this_cycle < 5 && rx.get_ms_blocks(block.data(), meta, buffer_ms))
             {
                 if (first)
@@ -133,33 +135,30 @@ int main(int argc, char *argv[])
                     start_wall = std::chrono::steady_clock::now();
                     first = false;
                 }
-
                 stuffFIFO(rxState.sampleFIFO, block.data(), block_size, meta.sample_tick, meta.unix_time);
                 rxState.totalSamplesPushed += block_size * 2;
                 blocks_pulled_this_cycle++;
             }
 
-            // STEP 4: ACQUISITION PHASE (COMPLETE DISCOVERY VISUALIZATION)
+            // 2. ACQUISITION HANDOVER: Seed channels safely without a destructive std::move
             if (acq_needed)
             {
                 if (rxState.sampleFIFO.size() >= block_size * 2)
                 {
                     auto results = acqMgr.run(meta, block.data());
                     t3 = get_timeData(meta.unix_time, meta.sample_tick, meta.fs_rate);
-                    printf("[*] Starting Acquisition on unified stream chunk... %s\n", get_iso8601_timestamp(t3.unixSecond, t3.msCount).c_str());
 
                     if (!results.empty())
                     {
                         activeChannels.clear();
                         const AcqResult *focusTarget = nullptr;
 
-                        // FIX Step 1: Process and PRINT every single satellite discovered in this frame first
                         for (const auto &res : results)
                         {
                             if (res.prn == (int)focusPRN)
                             {
                                 printf(" LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f <--- Focus\n", res.prn, res.snr, res.bin, res.codePhase);
-                                focusTarget = &res; // Cache the pointer to initialize after logging finishes
+                                focusTarget = &res;
                             }
                             else
                             {
@@ -167,107 +166,119 @@ int main(int argc, char *argv[])
                             }
                         }
 
-                        // FIX Step 2: Now that all tracking targets are visible, perform the handover if found
                         if (focusTarget != nullptr)
                         {
                             activeChannels.emplace_back(focusTarget->prn, (double)meta.fs_rate, *focusTarget, pcs.getSV(focusTarget->prn));
                             activeChannels.back().decoder->setFocus(true);
 
                             auto &state = activeChannels.front();
-                            state.sampleFIFO = std::move(rxState.sampleFIFO);
                             state.totalSamplesPushed = rxState.totalSamplesPushed;
-                            state.totalSamplesConsumed = 0;
-                            state.handover_sample_tick = meta.sample_tick;
+                            state.totalSamplesConsumed = 0; // Relative read pointer for this channel
+
+                            // FIX: Stashing the initialization phase inside your uint32_t baseline structure cleanly
+                            state.handover_sample_tick = (uint32_t)std::round(focusTarget->codePhase);
                             state.handover_unix_time = meta.unix_time;
 
                             acq_needed = false;
-                            printf("[*] HANDOVER SUCCESS: Pipeline locked sequentially. No skips.\n");
-
-                            // Continue cleanly to drop straight down into the 1ms multiplexer loop
+                            printf("[*] HANDOVER SUCCESS: Channel anchored to stream timeline. No skips.\n");
                             continue;
                         }
                         else
                         {
-                            printf("[!] Focus PRN %d not found in pool. Retrying...\n", focusPRN);
                             rxState.resetPipelines();
                             continue;
                         }
                     }
-                    else
-                    {
-                        printf("[!] No satellites found. Retrying...\n");
-                        rxState.resetPipelines();
-                        continue;
-                    }
                 }
             }
 
-            // STEP 5 & 6: MONOTONIC MASTER-STREAM PIPELINE (ZERO DUPLICATION / ZERO DATA DROPS)
-            if (!activeChannels.empty())
-            {
-                auto &state = activeChannels.front();
-                if (state.prn == (int)focusPRN)
-                {
+                    // ========================================================================
+        // 3. MULTI-CHANNEL PROCESSING: Bounded Real-Time Drainage Loop
+        // ========================================================================
+        if (!activeChannels.empty()) {
+            const size_t HARDWARE_MS_BLOCK = 16368;
+            const size_t TOTAL_BLOCK_SAMPLES = buffer_ms * HARDWARE_MS_BLOCK; // 81840 samples
 
-                    // FIX 1: Eliminate the local channel queue duplication.
-                    // Feed the correlator directly from the global rxState memory stack.
-                    while (rxState.sampleFIFO.size() >= 16368)
-                    {
+            // FIX: Loop and process chunks continuously until the incoming FIFO 
+            // is fully drained below a 5ms block threshold. This prevents heap accumulation.
+            while (rxState.sampleFIFO.size() >= TOTAL_BLOCK_SAMPLES) {
+                
+                bool chunkProcessed = true;
 
-                        // Slice out 1ms of continuous hardware samples straight from the source container
-                        std::vector<RawSample> flatSlice(rxState.sampleFIFO.begin(), rxState.sampleFIFO.begin() + 16368);
+                for (auto &state : activeChannels) {
+                    if (state.prn == (int)focusPRN) {
 
-                        CorrelatorResult res = state.processor->Correlator(flatSlice.data(), flatSlice.size());
+                        // Process exactly 5 consecutive 1ms snapshots inside this chunk
+                        for (int ms_step = 0; ms_step < buffer_ms; ++ms_step) {
+                            
+                            // Slice out a 1ms snapshot from the front of the queue for this step
+                            auto startIt = rxState.sampleFIFO.begin() + (ms_step * HARDWARE_MS_BLOCK);
+                            std::vector<RawSample> flatSlice(startIt, startIt + HARDWARE_MS_BLOCK);
 
-                        // FIX 2: Ensure strict consumption feedback
-                        if (res.consumed_sample_count > 0)
-                        {
-                            state.totalSamplesConsumed += res.consumed_sample_count;
+                            // Pass the block to your correlator
+                            CorrelatorResult res = state.processor->Correlator(flatSlice.data(), flatSlice.size());
 
-                            // Erase exactly what was evaluated from the global master queue.
-                            // This makes data duplication mathematically impossible.
-                            rxState.sampleFIFO.erase(rxState.sampleFIFO.begin(), rxState.sampleFIFO.begin() + res.consumed_sample_count);
-                        }
-                        else
-                        {
-                            // Fail-safe protection: if the tracking filters stall, force advance to break deadlocks
-                            rxState.sampleFIFO.erase(rxState.sampleFIFO.begin(), rxState.sampleFIFO.begin() + 16368);
-                        }
+                            // Codephase tracking relative to the sample clock layout
+                            double activeCodeFreq = 1023000.0 + (double)res.doppler_hz / 1540.0;
 
-                        if (res.epoch_valid)
-                        {
-                            epochs_captured++;
-
-                            // Track time monotonically based on total physical data consumed
-                            double precise_ms_elapsed = (double)state.totalSamplesConsumed * 1000.0 / meta.fs_rate;
-                            uint64_t total_ms_since_epoch = ((uint64_t)state.handover_unix_time * 1000) + (uint64_t)std::round(precise_ms_elapsed);
-
-                            t3.unixSecond = total_ms_since_epoch / 1000;
-                            t3.msCount = total_ms_since_epoch % 1000;
-
-                            fprintf(out, "%s ", get_iso8601_timestamp(t3.unixSecond, t3.msCount).c_str());
-                            printCorrelatorData(out, res);
-                            fprintf(out, " | Bits: %c\n", (res.Pi > 0) ? '#' : '-');
-                            state.total_tracked_ms++;
-
-                            if (epochs_captured % 100 == 0)
-                            {
-                                printCorrelatorData(stdout, res);
-                                fprintf(stdout, "\r");
-                                fflush(stdout);
+                            if (res.rollover_sample_index_in_block != -1) {
+                                double dynamic_samples_per_chip = meta.fs_rate / activeCodeFreq;
+                                double chips_to_end = (double)res.rollover_sample_index_in_block / dynamic_samples_per_chip;
+                                state.result.codePhase = std::fmod(1023.0 - chips_to_end, 1023.0);
+                            } else {
+                                double chips_advanced = (HARDWARE_MS_BLOCK * activeCodeFreq) / meta.fs_rate;
+                                state.result.codePhase = std::fmod(state.result.codePhase + chips_advanced, 1023.0);
                             }
-                        }
-                    } // End while processing master chunks
 
-                    total_data_time += (double)buffer_ms / 1000.0;
+                            res.code_phase = state.result.codePhase;
+                            state.handover_sample_tick = (uint32_t)std::round(res.code_phase);
+
+                            // Telemetry logging with synchronized timebases
+                            if (res.epoch_valid) {
+                                epochs_captured++;
+
+                                uint64_t base_packet_ms = ((uint64_t)meta.unix_time * 1000);
+                                uint64_t total_ms_since_epoch = base_packet_ms + ms_step;
+
+                                t3.unixSecond = total_ms_since_epoch / 1000;
+                                t3.msCount = total_ms_since_epoch % 1000;
+
+                                fprintf(out, "%s ", get_iso8601_timestamp(t3.unixSecond, t3.msCount).c_str());
+                                printCorrelatorData(out, res);
+                                fprintf(out, " | Bits: %c\n", (res.Pi > 0) ? '#' : '-');
+
+                                if (epochs_captured % 100 == 0) {
+                                    printCorrelatorData(stdout, res);
+                                    fprintf(stdout, "\n");
+                                    fflush(stdout);
+                                }
+                            }
+                        } // End 5ms step loop
+                    }
+                } // End channel loop
+
+                // ========================================================================
+                // 4. STREAM CLEANUP: Evict the evaluated block completely from the front
+                // ========================================================================
+                if (chunkProcessed) {
+                    // Evict the 5ms block that was just fully evaluated by the channels
+                    rxState.sampleFIFO.erase(rxState.sampleFIFO.begin(), rxState.sampleFIFO.begin() + TOTAL_BLOCK_SAMPLES);
+                    
+                    for (auto &state : activeChannels) {
+                        state.totalSamplesConsumed = 0;
+                    }
+                } else {
+                    // Guard to break the while loop if processing skips
+                    break; 
                 }
-            }
-            else
-            {
-                std::this_thread::sleep_for(std::chrono::microseconds(500));
-            }
+            } // End drainage while loop
 
-        } // End while true
+            total_data_time += (double)buffer_ms / 1000.0;
+        } else {
+            std::this_thread::sleep_for(std::chrono::microseconds(500));
+        }
+
+        } // End while(true)
     }
     catch (const std::exception &e)
     {

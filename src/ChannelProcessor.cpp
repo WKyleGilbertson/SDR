@@ -53,7 +53,7 @@ void ChannelProcessor::calculateSNR(Accumulators &acc, double &snr)
     }
 }
 
-ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT sv)
+ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT &sv)
     : _fs(fs_rate), _carrNco(8, (float)fs_rate), _codeNco(0, (float)fs_rate), _m_sv(sv)
 {
     _carrFreqBasis = 4.092e6f;
@@ -67,11 +67,14 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     _oldCarrError = 0.0f;
     _oldCarrNco = _carrFreqBasis - (float)_doppler_hz;
     _oldCodeError = 0.0f;
-    _oldCodeNco = 0.0f;
+    _oldCodeNco = ((float)_doppler_hz / 1540.0f);
+    //_oldCodeNco = 0.0f;
     _accumulatedCarrierCycles = 0;
     _sampleCounter = 0;
     _prevCodePhase = 0;
     _msIntegrated = 0;
+    _initialCodePhase = init.codePhase;
+    _continuousTrackedChips = init.codePhase;
 
     for (int i = 0; i < 20; ++i)
     {
@@ -85,7 +88,12 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
 
     float spc = (float)_fs / 1023000.0f;
     int chipTravelDelay = (int)std::round(32.0f / spc);
-    _codeNco.InitializeEPLPipeline(init.codePhase, chipTravelDelay);
+    _initialCodePhase = std::fmod(init.codePhase + (double)chipTravelDelay, 1023.0);
+
+    _continuousTrackedChips = _initialCodePhase;
+    _absoluteBaseRotations = 0;
+    //_codeNco.InitializeEPLPipeline(init.codePhase, chipTravelDelay);
+    _codeNco.InitializeEPLPipeline(_initialCodePhase, chipTravelDelay);
 
     _carrNco.SetFrequency(_carrFreqBasis - (float)_doppler_hz);
     _codeNco.SetFrequency(_codeFreqBasis);
@@ -113,41 +121,37 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
 
 CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t availableSamples)
 {
+    CorrelatorResult res = {};
+    res.epoch_valid = true;
+    res.consumed_sample_count = availableSamples;
+    res.rollover_sample_index_in_block = -1; // Default to no-rollover
+
     if (availableSamples == 0 || samples == nullptr)
     {
-        CorrelatorResult emptyRes = {};
-        emptyRes.epoch_valid = false;
-        emptyRes.consumed_sample_count = 0;
-        return emptyRes;
+        res.epoch_valid = false;
+        res.consumed_sample_count = 0;
+        return res;
     }
 
-    static uint32_t persistent_carrier_phase = 0;
-    static uint32_t persistent_code_phase = 0;
-    static bool phase_context_initialized = false;
-
-    if (phase_context_initialized)
-    {
-        _carrNco.setPhase(persistent_carrier_phase);
-        _codeNco.setPhase(persistent_code_phase);
-    }
-    else
-    {
-        phase_context_initialized = true;
-    }
-
-    bool epochTriggered = false;
-    size_t i = 0;
-
-    // 1. Core Mixing Pipeline (NCO phase handles tracking step accumulation naturally)
-    for (i = 0; i < availableSamples; ++i)
+    // 1. Rigid Hardware Mixing Loop
+    for (size_t i = 0; i < availableSamples; ++i)
     {
         _sampleCounter++;
-        uint32_t carrIdx = _carrNco.clk();
-        uint32_t oldCodeRotations = _codeNco.getRotations();
 
+        uint32_t carrIdx = _carrNco.clk();
+
+        // Track the rotations value BEFORE advancing the NCO
+        uint32_t prev_rotations = _codeNco.getRotations();
         _codeNco.clk();
 
-        // NATIVE MIXING: Use raw int8_t data straight from the pointer matrix array
+        // NCO NATIVE ROLLOVER DETECTION:
+        // Because NCO.cpp wraps from 1022 back to 0, a rollover occurs when
+        // the current rotations count drops lower than the previous count.
+        if (_codeNco.getRotations() < prev_rotations)
+        {
+            res.rollover_sample_index_in_block = (int)i;
+        }
+
         int16_t bb_i = (int16_t)(samples[i].i * _carrNco.cosine(carrIdx) * 127);
         int16_t bb_q = (int16_t)(samples[i].q * _carrNco.sine(carrIdx) * 127);
 
@@ -157,22 +161,13 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
         _acc.Pq -= (bb_q * _codeNco.Prompt);
         _acc.Li += (bb_i * _codeNco.Late);
         _acc.Lq -= (bb_q * _codeNco.Late);
-
-        if (_codeNco.getRotations() < oldCodeRotations)
-        {
-            epochTriggered = true;
-        }
     }
 
-    CorrelatorResult res = {};
-    res.numSymbols = 0;
-    res.epoch_valid = epochTriggered;
-    res.consumed_sample_count = availableSamples;
-
+    // Telemetry tracking
     res.rollover_sample_idx = samples[availableSamples - 1].sample_tick;
     res.unix_time = samples[availableSamples - 1].unix_time;
 
-    // 2. FIXED DETACHED LAYER: Compute loop filters
+    // 2. Loop Filters & Discriminators (Using actual availableSamples time)
     float norm = 1.0f / (float)availableSamples;
     float I = (float)_acc.Pi * norm;
     float Q = (float)_acc.Pq * norm;
@@ -181,33 +176,23 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
     float Late_I = (float)_acc.Li * norm;
     float Late_Q = (float)_acc.Lq * norm;
 
-    float dynamicT = 0.001f; // Perfect 1 ms tracking interval steps
+    float dynamicT = (float)availableSamples / (float)_fs;
     float totalPower = (I * I) + (Q * Q);
 
-    // =================================================================
-    // FIX: RADIANS-NORMALIZED SINGLE-QUADRANT ATANF DISCRIMINATOR
-    // =================================================================
-    // 1. Strip out the data navigation message BPSK bits
-    float sign_I  = (I >= 0.0f) ? 1.0f : -1.0f;
+    float sign_I = (I >= 0.0f) ? 1.0f : -1.0f;
     float clean_I = I * sign_I;
     float clean_Q = Q * sign_I;
-
-    // 2. Calculate the raw phase tracking error using the single-argument tangent lookup
     float raw_angular_error = (clean_I > 1e-6f) ? atanf(clean_Q / clean_I) : 0.0f;
-
-    // 3. SCALE TO RADIANS: Normalize the angular output relative to PI to prevent 
-    // the loop filter coefficients from overcorrecting at block boundaries.
     float carrError = raw_angular_error / (float)M_PI;
 
-    // Keep your standard phase lock guard to suppress high-frequency noise spikes
-    if (fabs(carrError - _oldCarrError) > 0.5f) {
+    if (fabs(carrError - _oldCarrError) > 0.5f)
+    {
         carrError = _oldCarrError + (carrError * 0.1f);
     }
-    // =================================================================
+
     float E = sqrtf((Early_I * Early_I) + (Early_Q * Early_Q));
     float L = sqrtf((Late_I * Late_I) + (Late_Q * Late_Q));
     float P = sqrtf(totalPower);
-
     float codeError = (P > 1e-6f) ? ((E - L) / (2.0f * P)) : 0.0f;
 
     calculateSNR(_acc, _snr);
@@ -218,7 +203,7 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
         res.symbols[res.numSymbols++] = (I > 0.0f) ? 1 : -1;
     }
 
-    // 3. Loop Filter Updates with Controlled Damping
+    // 3. Update Frequencies
     float carrNcoUpdate = _oldCarrNco + (_carrLF.tau2 / _carrLF.tau1) * (carrError - _oldCarrError) + (carrError * (dynamicT / _carrLF.tau1));
     _oldCarrNco = carrNcoUpdate;
     _oldCarrError = carrError;
@@ -227,25 +212,17 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
     float codeNcoUpdate = _oldCodeNco + (_codeLF.tau2 / _codeLF.tau1) * (codeError - _oldCodeError) + (codeError * (dynamicT / _codeLF.tau1));
     _oldCodeNco = codeNcoUpdate;
     _oldCodeError = codeError;
-
     _currentCommandedFreq = carrNcoUpdate;
 
-    // RESTORATION FIX: Update the target frequencies directly.
-    // This allows the internal NCO phases to persist naturally across 5 ms blocks.
     _carrNco.SetFrequency(_currentCommandedFreq);
     _codeNco.SetFrequency(_codeFreqBasis + codeNcoUpdate + ((float)_doppler_hz / 1540.0f));
 
-    persistent_carrier_phase = _carrNco.getPhase();
-    persistent_code_phase = _codeNco.getPhase();
-
     res.carrier_phase_error = carrError;
-    res.absolute_carrier_phase = ((double)_accumulatedCarrierCycles * (2.0 * M_PI)) + (((double)_carrNco.getPhase() / 4294967296.0) * (2.0 * M_PI));
-    res.doppler_hz = (float)(_carrFreqBasis - _currentCommandedFreq);
+    res.absolute_carrier_phase = (((double)_carrNco.getPhase() / 4294967296.0) * (2.0 * M_PI));
+    res.doppler_hz = (float)_doppler_hz;
     res.prn = _prn;
-
     res.Pi = (double)_acc.Pi;
     res.Pq = (double)_acc.Pq;
-    res.code_phase = (double)_codeNco.getRotations() + ((double)_codeNco.getPhase() / 4294967296.0);
     res.snr = _snr;
     res.is_locked = _isLocked;
 
