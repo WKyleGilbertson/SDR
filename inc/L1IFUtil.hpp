@@ -8,6 +8,19 @@
 #include <cstdint>
 #include <cstdio>
 
+#pragma pack(push, 1)
+struct RFE_Header_t
+{
+    uint8_t pkt_type;
+    uint32_t fs_rate;
+    uint32_t unix_time;
+    uint32_t sample_tick;
+    uint32_t seq_num;
+    char dev_tag[16];
+    uint16_t payload_len;
+};
+#pragma pack(pop)
+
 std::string get_iso8601_timestamp(uint32_t unix_time, uint16_t ms_offset);
 struct TimeTrio {
     uint32_t unixSecond;
@@ -37,6 +50,15 @@ TimeTrio get_timeData(uint32_t unixSeconds, uint32_t sampleTick, uint32_t Fs);
  * Sign (s): 0 -> Positive, 1 -> Negative
  * Mag  (m): 0 -> 1 (Low),  1 -> 3 (High)
  */
+struct RawSample
+{
+    int8_t i;             // Raw unscaled I value directly from MAX2769
+    int8_t q;             // Raw unscaled Q value directly from MAX2769
+    uint32_t sample_tick; // Inherited directly from meta.sample_tick
+    uint32_t unix_time;
+    uint64_t sample_index;
+};
+
 struct ComplexSample {
     int16_t i;
     int16_t q;

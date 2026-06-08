@@ -4,7 +4,12 @@
 ElasticReceiver::ElasticReceiver(size_t max_blocks)
     : _max_queue_size(max_blocks), _s(INVALID_SOCKET), _is_running(false), _aligned(false)
 {
-    _staging_buffer.reserve(8184);
+    _staging_buffer.reserve(_samples_per_ms / 2);
+    _ring_capacity =
+    _samples_per_ms * 250;
+
+_sample_ring.resize(
+    _ring_capacity);
 }
 
 ElasticReceiver::~ElasticReceiver()
@@ -78,6 +83,7 @@ void ElasticReceiver::ingest_thread()
         RFE_Header_t *hdr = (RFE_Header_t *)packet_raw.data();
         uint8_t *payload = packet_raw.data() + H_SIZE;
         size_t payload_len = len - H_SIZE;
+        if (_last_seq_num == 0) _last_seq_num = hdr->seq_num;
 
         // Dynamic Sample Rate Detection
         if (hdr->fs_rate != current_fs_rate)
@@ -85,8 +91,11 @@ void ElasticReceiver::ingest_thread()
             current_fs_rate = hdr->fs_rate;
             _samples_per_ms = (uint16_t)(current_fs_rate / 1000);
             _packets_per_ms = (uint8_t)(_samples_per_ms / 2046);
-            fprintf(stdout, "[*] Rate Detected: %8u Hz (%hhu ppm)\n",
-                    current_fs_rate, _packets_per_ms );
+            _ring_capacity = _samples_per_ms * 250;
+            _sample_ring.clear();
+            _sample_ring.resize(_ring_capacity);
+            fprintf(stdout, "[*] Rate Encoded: %8u Hz (%hhu PktsPerMS)\n",
+                    current_fs_rate, _packets_per_ms);
         }
 
         total_packets_in_second = (uint16_t)(hdr->fs_rate / 2046); // IF alway 1023 pkt
@@ -114,6 +123,24 @@ void ElasticReceiver::ingest_thread()
             _staging_buffer.insert(_staging_buffer.end(), payload, payload + payload_len);
             _staging_count++;
 
+            /* Added by ChatGPT*/
+            // Push to queue once a full millisecond is staged.. unpacked
+            /*
+            if (_staging_count >= _packets_per_ms)
+            {
+                unpack_to_ring(
+                    _staging_buffer.data(),
+                    _staging_buffer.size(),
+                    _staging_header.sample_tick,
+                    hdr->unix_time);
+
+                _last_unix_time = hdr->unix_time;
+                _last_ms_count = _ms_count;
+                _last_ms_frac = _ms_frac;
+
+                _staging_buffer.clear();
+                _staging_count = 0;
+            } */
             // Push to queue once a full millisecond is staged
             if (_staging_count >= _packets_per_ms)
             {
@@ -122,7 +149,15 @@ void ElasticReceiver::ingest_thread()
                 _last_unix_time = hdr->unix_time;
                 _last_ms_count = _ms_count;
                 _last_ms_frac = _ms_frac;
-
+                unpack_to_ring(
+                    _staging_buffer.data(),
+                    _staging_buffer.size(),
+                    _staging_header.sample_tick,
+                    hdr->unix_time);
+/*fprintf(stdout,
+    "[DBG] staged=%zu expected=%u\n",
+    _staging_buffer.size(),
+    _samples_per_ms / 2); */
                 if (_ready_queue.size() > _max_queue_size)
                 {
                     _ready_queue.pop_front();
@@ -130,27 +165,33 @@ void ElasticReceiver::ingest_thread()
 
                 _staging_buffer.clear();
                 _staging_count = 0;
-            }
+            //printf("Ring write: %llu\n", _write_index);
+            } 
         }
     } // End of while (_is_running)
 }
 
-void ElasticReceiver::jump_to_latest_epoch() {
+void ElasticReceiver::jump_to_latest_epoch()
+{
     std::lock_guard<std::mutex> lock(_mtx);
-    
+
     int latest_epoch_index = -1;
     // Walk backward from newest data to oldest
-    for (int i = (int)_ready_queue.size() - 1; i >= 0; --i) {
+    for (int i = (int)_ready_queue.size() - 1; i >= 0; --i)
+    {
         // Find the most recent "Top of the Millisecond" (frac 0)
-        if ((_ready_queue[i].header.sample_tick % _samples_per_ms) == 0) {
+        if ((_ready_queue[i].header.sample_tick % _samples_per_ms) == 0)
+        {
             latest_epoch_index = i;
             break;
         }
     }
 
-    if (latest_epoch_index > 0) {
+    if (latest_epoch_index > 0)
+    {
         // Keep only the latest epoch and everything that came after it
-        for (int i = 0; i < latest_epoch_index; ++i) {
+        for (int i = 0; i < latest_epoch_index; ++i)
+        {
             _ready_queue.pop_front();
         }
     }
@@ -185,10 +226,148 @@ bool ElasticReceiver::get_ms_blocks(uint8_t *out, RFE_Header_t &first_header, si
     return true;
 }
 
-TimeTrio ElasticReceiver::get_time_trio() {
+TimeTrio ElasticReceiver::get_time_trio()
+{
     TimeTrio tme3;
     tme3.unixSecond = _last_unix_time;
     tme3.msCount = _last_ms_count;
     tme3.fracMS = _last_ms_frac;
     return tme3;
+}
+
+void ElasticReceiver::unpack_to_ring(
+    const uint8_t* packed,
+    size_t packed_count,
+    uint32_t sample_tick,
+    uint32_t unix_time)
+{
+    const UnpackEntry* lut =
+        GetLUT_FNHN();
+
+    std::lock_guard<std::mutex>
+        lock(_ring_mtx);
+
+    uint32_t tick =
+        sample_tick;
+
+    for (size_t i = 0;
+         i < packed_count;
+         ++i)
+    {
+        const auto& e =
+            lut[packed[i]];
+
+        size_t idx =
+            _write_index %
+            _ring_capacity;
+
+        _sample_ring[idx].i =
+            e.s0.i;
+        _sample_ring[idx].q =
+            e.s0.q;
+        _sample_ring[idx]
+            .sample_tick =
+            tick++;
+        _sample_ring[idx]
+            .unix_time =
+            unix_time;
+        _sample_ring[idx]
+            .sample_index =
+            _global_sample_index++;
+        _write_index++;
+
+        idx =
+            _write_index %
+            _ring_capacity;
+
+        _sample_ring[idx].i =
+            e.s1.i;
+        _sample_ring[idx].q =
+            e.s1.q;
+        _sample_ring[idx]
+            .sample_tick =
+            tick++;
+        _sample_ring[idx]
+            .unix_time =
+            unix_time;
+        _sample_ring[idx]
+            .sample_index =
+            _global_sample_index++;
+        _write_index++;
+    }
+}
+
+bool ElasticReceiver::validate_ring_continuity(size_t lookback)
+{
+    std::lock_guard<std::mutex> lock(_ring_mtx);
+
+    if (_write_index < 2)
+        return true;
+
+    uint64_t end =
+        (_write_index < lookback)
+            ? _write_index
+            : lookback;
+
+    uint64_t start =
+        (_write_index - end);
+
+    for (uint64_t i = start + 1;
+         i < _write_index;
+         ++i)
+    {
+        const RawSample& prev =
+            _sample_ring[
+                (i - 1) %
+                _ring_capacity];
+
+        const RawSample& curr =
+            _sample_ring[
+                i %
+                _ring_capacity];
+
+        uint32_t expected =
+            prev.sample_tick + 1;
+
+        if (curr.sample_tick != expected)
+        {
+            fprintf(stdout,
+                "[RING BREAK] "
+                "idx=%llu "
+                "expected=%u "
+                "got=%u\n",
+                i,
+                expected,
+                curr.sample_tick);
+
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool ElasticReceiver::get_window(
+    uint64_t start_index,
+    RawSample*& out_ptr,
+    unsigned int count,
+    std::vector<RawSample>& scratch)
+{
+    std::lock_guard<std::mutex> lock(_ring_mtx);
+
+    if (_write_index < start_index + count)
+        return false;
+
+    scratch.resize(count);
+
+    for (unsigned int i = 0; i < count; ++i)
+    {
+        scratch[i] =
+            _sample_ring[
+                (start_index + i) %
+                _ring_capacity];
+    }
+
+    out_ptr = scratch.data();
+    return true;
 }

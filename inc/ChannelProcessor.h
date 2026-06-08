@@ -9,13 +9,14 @@
 #include "L1IFUtil.hpp"  // Has the bit unpacking
 #include "PCSEngine.hpp" // This defines AcqResult
 
+/*
 struct RawSample
 {
     int8_t i;             // Raw unscaled I value directly from MAX2769
     int8_t q;             // Raw unscaled Q value directly from MAX2769
     uint32_t sample_tick; // Inherited directly from meta.sample_tick
     uint32_t unix_time;
-};
+}; */
 
 struct CorrelatorResult
 {

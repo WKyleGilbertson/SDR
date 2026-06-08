@@ -66,7 +66,7 @@ void stuffFIFO(std::deque<RawSample> &fifo, const uint8_t *data, size_t count, u
         s1.unix_time = unix_time;
         fifo.push_back(s1);
     }
-}
+} 
 
 int main(int argc, char *argv[])
 {
@@ -81,6 +81,7 @@ int main(int argc, char *argv[])
     v.printVersion();
     RFE_Header_t meta = {};
     TimeTrio t3;
+    static int dbg_counter = 0;
     std::list<ChannelState> activeChannels;
     ChannelState rxState(0, 16368000.0, AcqResult(), G2INIT());
 
@@ -118,7 +119,8 @@ int main(int argc, char *argv[])
         // REFACTORED MASTER PROCESSING LOOP (STRICT STRIDE SYNCHRONIZATION)
         // ========================================================================
         bool first = true;
-        const int buffer_ms = 5;
+        //const int buffer_ms = 5;
+        const int buffer_ms = 1;
         const size_t samples_per_ms = (size_t)(meta.fs_rate / 1000.0);
         const size_t block_size = samples_per_ms * buffer_ms;
         std::vector<uint8_t> block(block_size);
@@ -128,23 +130,69 @@ int main(int argc, char *argv[])
 
         while (true)
         {
-            // 1. NETWORK INGEST: Pull exactly ONE distinct 5ms block per cycle to guarantee alignment
-            if (rx.get_ms_blocks(block.data(), meta, buffer_ms))
+            dbg_counter++;
+            if (dbg_counter % 200 == 0)
             {
-                if (first)
-                {
-                    start_wall = std::chrono::steady_clock::now();
-                    first = false;
-                }
-                stuffFIFO(rxState.sampleFIFO, block.data(), block_size, meta.sample_tick, meta.unix_time);
-                rxState.totalSamplesPushed += block_size * 2;
+                bool ok = rx.validate_ring_continuity();
+            if (ok) {
+                printf("[RING OK] "
+                "write=%llu\n", rx.get_write_index());
             }
-            else
-            {
-                // No new data waiting on socket: drop thread pressure and retry ingest
-                std::this_thread::sleep_for(std::chrono::microseconds(250));
-                continue;
             }
+        // ========================================================================
+        // 1. NETWORK INGEST: Strict Validation Gate
+        // ========================================================================
+        // Only unpack and append data if the network layer explicitly returns a fresh block.
+        // This stops stale data duplication at the second boundaries.
+        if (rx.get_ms_blocks(block.data(), meta, buffer_ms)) {
+            if (first) {
+                start_wall = std::chrono::steady_clock::now();
+                first = false;
+            }
+            stuffFIFO(rxState.sampleFIFO, block.data(), block_size, meta.sample_tick, meta.unix_time);
+            rxState.totalSamplesPushed += block_size * 2;
+            // Compare //
+            RawSample* ring_ptr = nullptr;
+std::vector<RawSample> scratch;
+
+uint64_t ring_cursor =
+    rx.get_write_index() -
+    rxState.sampleFIFO.size();
+
+if (rx.get_window(
+        ring_cursor,
+        ring_ptr,
+        32,
+        scratch))
+{
+    for (int i = 0; i < 32; ++i)
+    {
+        const auto& fifo =
+            rxState.sampleFIFO[i];
+
+        const auto& ring =
+            ring_ptr[i];
+
+        if (fifo.sample_tick !=
+            ring.sample_tick)
+        {
+            printf(
+                "[MISMATCH] "
+                "%u vs %u delta: %d\n",
+                fifo.sample_tick,
+                ring.sample_tick,
+                (int)(fifo.sample_tick - ring.sample_tick));
+
+            break;
+        }
+    }
+}
+            // End Compare //
+        } else {
+            // No new data waiting on socket: drop thread pressure and retry ingest
+            std::this_thread::sleep_for(std::chrono::microseconds(250));
+            continue;
+        }
 
             // 2. ACQUISITION HANDOVER: Guarded handover baseline mapping
             if (acq_needed)
@@ -196,119 +244,111 @@ int main(int argc, char *argv[])
                 }
             }
 
-            // ========================================================================
-            // 3. MULTI-CHANNEL PROCESSING: Direct 1ms Step Evaluation
-            // ========================================================================
-            if (!activeChannels.empty())
-            {
-                const size_t HARDWARE_MS_BLOCK = 16368;
-                const size_t TOTAL_BLOCK_SAMPLES = buffer_ms * HARDWARE_MS_BLOCK; // 81840 samples
+         // ========================================================================
+        // 3. MULTI-CHANNEL PROCESSING: Bounded Sample Architecture
+        // ========================================================================
+        if (!activeChannels.empty()) {
+            const size_t HARDWARE_MS_BLOCK = 16368;
+            const size_t TOTAL_BLOCK_SAMPLES = buffer_ms * HARDWARE_MS_BLOCK;
 
-                // Process chunks continuously as they are drained from the incoming queue
-                while (rxState.sampleFIFO.size() >= TOTAL_BLOCK_SAMPLES)
-                {
+            while (rxState.sampleFIFO.size() >= TOTAL_BLOCK_SAMPLES) {
+                
+                for (auto &state : activeChannels) {
+                    if (state.prn == (int)focusPRN) {
 
-                    bool chunkProcessed = true;
+                        // Feed the correlator 1 ms at a time across your 5 ms network block
+                        for (int ms_step = 0; ms_step < buffer_ms; ++ms_step) {
+                            
+                            // Slice out a clean 1ms snapshot starting exactly from the current step offset
+                            auto startIt = rxState.sampleFIFO.begin() + (ms_step * HARDWARE_MS_BLOCK);
+                            std::vector<RawSample> flatSlice(startIt, startIt + HARDWARE_MS_BLOCK);
 
-                    for (auto &state : activeChannels)
-                    {
-                        if (state.prn == (int)focusPRN)
-                        {
+                            // Feed exactly 1ms of data to the correlator
+                            CorrelatorResult res = state.processor->Correlator(flatSlice.data(), flatSlice.size());
+                            
+                            // Grab a strict reference to the last sample inside this 1ms processing pass
+                            const RawSample &lastSample = flatSlice.back();
 
-                            // Feed the correlator 1 ms at a time across your 5 ms network block
-                            for (int ms_step = 0; ms_step < buffer_ms; ++ms_step)
-                            {
+                            // Codephase tracking relative to the sample clock layout
+                            double activeCodeFreq = 1023000.0 + (double)res.doppler_hz / 1540.0;
 
-                                // Slice out a clean 1ms snapshot starting exactly from the current step offset
-                                auto startIt = rxState.sampleFIFO.begin() + (ms_step * HARDWARE_MS_BLOCK);
-                                std::vector<RawSample> flatSlice(startIt, startIt + HARDWARE_MS_BLOCK);
+                            if (res.rollover_sample_index_in_block != -1) {
+                                double dynamic_samples_per_chip = (double)(samples_per_ms * 1000.0) / activeCodeFreq;
+                                double chips_to_end = (double)res.rollover_sample_index_in_block / dynamic_samples_per_chip;
+                                state.result.codePhase = std::fmod(1023.0 - chips_to_end, 1023.0);
+                            } else {
+                                double chips_advanced = (double)HARDWARE_MS_BLOCK * activeCodeFreq / (double)(samples_per_ms * 1000.0);
+                                state.result.codePhase = std::fmod(state.result.codePhase + chips_advanced, 1023.0);
+                            }
 
-                                // Feed exactly 1ms of data to the correlator
-                                CorrelatorResult res = state.processor->Correlator(flatSlice.data(), flatSlice.size());
-                                const RawSample &lastSample = flatSlice.back();
-                                // Codephase tracking relative to the sample clock layout
-                                double activeCodeFreq = 1023000.0 + (double)res.doppler_hz / 1540.0;
+                            res.code_phase = state.result.codePhase;
+                            state.handover_sample_tick = (uint32_t)std::round(res.code_phase);
 
-                                if (res.rollover_sample_index_in_block != -1)
-                                {
-                                    double dynamic_samples_per_chip = meta.fs_rate / activeCodeFreq;
-                                    double chips_to_end = (double)res.rollover_sample_index_in_block / dynamic_samples_per_chip;
-                                    state.result.codePhase = std::fmod(1023.0 - chips_to_end, 1023.0);
-                                }
-                                else
-                                {
-                                    double chips_advanced = (HARDWARE_MS_BLOCK * activeCodeFreq) / meta.fs_rate;
-                                    state.result.codePhase = std::fmod(state.result.codePhase + chips_advanced, 1023.0);
-                                }
+                                                // Telemetry logging driven entirely by the physical sample stamps
+                                                // Telemetry logging driven entirely by the physical sample stamps
+                        if (res.epoch_valid) {
+                            epochs_captured++;
 
-                                res.code_phase = state.result.codePhase;
-                                state.handover_sample_tick = (uint32_t)std::round(res.code_phase);
+                            // 1. Pull both baseline tracking components from the current 1ms slice return
+                            const RawSample &sliceStartSample = flatSlice.front();
+                            uint64_t sample_unix_time = sliceStartSample.unix_time;
+                            uint64_t current_tick = sliceStartSample.sample_tick;
+                            uint64_t stable_fs_rate = (uint64_t)samples_per_ms * 1000;
 
-                                // Telemetry logging driven entirely by the physical sample stamps
-                                // Telemetry logging driven entirely by the physical sample stamps
-                                if (res.epoch_valid)
-                                {
-                                    epochs_captured++;
+                            // 2. Direct Math: Convert the resetting sub-second tick count to milliseconds (0-999)
+                            uint64_t sub_second_ticks = current_tick % stable_fs_rate;
+                            uint32_t calculated_ms = (uint32_t)((sub_second_ticks * 1000) / stable_fs_rate);
 
-                                    // FIX: Recombine whole seconds and resetting clock ticks directly into a unified
-                                    // millisecond timeline baseline to prevent any visual stutters or backward steps.
-                                    uint64_t sample_unix_time = lastSample.unix_time;
-                                    uint64_t current_tick = lastSample.sample_tick;
-                                    double samples_per_second = meta.fs_rate;
+                            // 3. COMBINED HARDWARE TIMING ENGINE
+                            uint64_t final_seconds = sample_unix_time;
+                            const RawSample &packetStartSample = rxState.sampleFIFO.front();
 
-                                    // 1. Isolate the precise fractional millisecond component (0-999) from the resetting clock
-                                    uint64_t fractional_ms = (uint64_t)((current_tick % (uint64_t)samples_per_second) * 1000 / samples_per_second);
+                            // Guard A: The hardware clock reset to zero mid-packet block
+                            if (current_tick < packetStartSample.sample_tick) {
+                                final_seconds += 1;
+                            }
 
-                                    // 2. RECONCILE TIMELINE: Build a continuous millisecond-epoch value using your sample stream fields.
-                                    // If the current hardware tick count is very low (indicating a reset to 0 has occurred),
-                                    // but the incoming packet-header unix_time hasn't ticked forward yet, we check the loop step
-                                    // to force the whole seconds column forward seamlessly.
-                                    uint64_t total_ms_since_epoch = (sample_unix_time * 1000) + fractional_ms;
+                            // Guard B: Track the absolute millisecond progression across your 5ms chunks
+                            // to ensure that consecutive blocks never allow a 1-second backward step.
+                            static uint64_t last_printed_epoch_ms = 0;
+                            uint64_t current_epoch_ms = (final_seconds * 1000) + calculated_ms;
 
-                                    // If we have processed multiple steps, but the fractional ms abruptly wraps around near zero,
-                                    // the physical hardware second rolled over mid-block. We force the seconds column forward.
-                                    if (ms_step > 0 && fractional_ms < 10)
-                                    {
-                                        // If sample_unix_time hasn't rolled forward yet, add 1000ms to advance the second column
-                                        total_ms_since_epoch += 1000;
-                                    }
+                            if (last_printed_epoch_ms > 0 && current_epoch_ms < last_printed_epoch_ms) {
+                                // If the combined time tries to step backward, force the seconds column forward
+                                final_seconds += 1;
+                                current_epoch_ms += 1000;
+                            }
+                            last_printed_epoch_ms = current_epoch_ms;
 
-                                    t3.unixSecond = total_ms_since_epoch / 1000;
-                                    t3.msCount = (uint32_t)(total_ms_since_epoch % 1000);
+                            t3.unixSecond = final_seconds;
+                            t3.msCount = calculated_ms;
 
-                                    fprintf(out, "%s ", get_iso8601_timestamp(t3.unixSecond, t3.msCount).c_str());
-                                    printCorrelatorData(out, res);
-                                    fprintf(out, " | Bits: %c\n", (res.Pi > 0) ? '#' : '-');
+                            fprintf(out, "%s ", get_iso8601_timestamp(t3.unixSecond, t3.msCount).c_str());
+                            printCorrelatorData(out, res);
+                            fprintf(out, " | Bits: %c\n", (res.Pi > 0) ? '#' : '-');
 
-                                    if (epochs_captured % 100 == 0)
-                                    {
-                                        printCorrelatorData(stdout, res);
-                                        fprintf(stdout, "\n");
-                                        fflush(stdout);
-                                    }
-                                }
-                            } // End 1ms step loop
+                            if (epochs_captured % 100 == 0) {
+                                printCorrelatorData(stdout, res);
+                                fprintf(stdout, "\n");
+                                fflush(stdout);
+                            }
                         }
-                    } // End channel loop
-
-                    // ========================================================================
-                    // 4. STREAM CLEANUP: Evict the evaluated block completely from the front
-                    // ========================================================================
-                    rxState.sampleFIFO.erase(rxState.sampleFIFO.begin(), rxState.sampleFIFO.begin() + TOTAL_BLOCK_SAMPLES);
-
-                    for (auto &state : activeChannels)
-                    {
-                        state.totalSamplesConsumed = 0;
+                        } // End 1ms step loop
                     }
-                } // End drainage while loop
+                } // End channel loop
 
-                total_data_time += (double)buffer_ms / 1000.0;
-            }
-            else
-            {
-                std::this_thread::sleep_for(std::chrono::microseconds(500));
-            }
+                // 4. STREAM CLEANUP: Evict the evaluated block completely from the front
+                rxState.sampleFIFO.erase(rxState.sampleFIFO.begin(), rxState.sampleFIFO.begin() + TOTAL_BLOCK_SAMPLES);
+                
+                for (auto &state : activeChannels) {
+                    state.totalSamplesConsumed = 0;
+                }
+            } // End drainage while loop
 
+            total_data_time += (double)buffer_ms / 1000.0;
+        } else {
+            std::this_thread::sleep_for(std::chrono::microseconds(500));
+        }
         } // End while(true)
     }
     catch (const std::exception &e)
