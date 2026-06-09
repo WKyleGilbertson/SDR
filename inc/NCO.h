@@ -25,11 +25,13 @@ public:
     float cosine(int32_t idx) const {return m_costable[idx];}
     float sine(int32_t idx) const {return m_sintable[idx];}
     uint32_t getPhase() const {return m_phase;}
-    uint32_t getRotations() const {return m_rotations;}
     uint32_t getMask() const {return m_mask;}
+    uint16_t getRotations() const {return m_rotations;}
+    uint8_t getFinePhase16() const { return (uint8_t)(m_phase >> 28); } 
+    float getCodePhase() const { return (float)m_rotations + ((float)m_phase * (1.0f / 4294967296.0f)); }
     //void setPhase(uint32_t p) { m_phase = p & m_mask; }
     void setPhase(uint32_t p) { m_phase = p; }
-    void NCO::InitializeEPLPipeline(double initialCodePhase, int chipTravelDelay);
+    void InitializeEPLPipeline(float initialCodePhase, int chipTravelDelay);
 private:
     const float m_ONE_ROTATION = (float) 2.0 * (1u << 31);
     uint32_t m_lglen, m_len, m_mask, m_phase, m_dphase, m_bias, idx;

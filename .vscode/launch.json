@@ -6,7 +6,7 @@
       "type": "cppvsdbg",
       "request": "launch",
       "program": "${workspaceFolder}/bin/${fileBasenameNoExtension}.exe",
-      "args": ["21"],
+      "args": ["10"],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}",
       "environment": [],

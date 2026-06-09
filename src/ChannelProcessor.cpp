@@ -54,7 +54,7 @@ void ChannelProcessor::calculateSNR(Accumulators &acc, double &snr)
 }
 
 ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT &sv)
-    : _fs(fs_rate), _carrNco(8, (float)fs_rate), _codeNco(0, (float)fs_rate), _m_sv(sv)
+    : _fs(fs_rate), _carrNco(8, (float)fs_rate), _codeNco(4, (float)fs_rate), _m_sv(sv)
 {
     _carrFreqBasis = 4.092e6f;
     _codeFreqBasis = 1.023e6f;
@@ -88,12 +88,23 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
 
     float spc = (float)_fs / 1023000.0f;
     int chipTravelDelay = (int)std::round(32.0f / spc);
-    _initialCodePhase = std::fmod(init.codePhase + (double)chipTravelDelay, 1023.0);
+    _initialCodePhase = init.codePhase;
 
     _continuousTrackedChips = _initialCodePhase;
     _absoluteBaseRotations = 0;
-    //_codeNco.InitializeEPLPipeline(init.codePhase, chipTravelDelay);
     _codeNco.InitializeEPLPipeline(_initialCodePhase, chipTravelDelay);
+
+    /* Debug*/
+    printf(
+    "[CHAN INIT] PRN %d acqCode=%.4f initCode=%.4f ncoCode=%.4f rot=%u fine=%u delay=%d\n",
+    _prn,
+    init.codePhase,
+    _initialCodePhase,
+    _codeNco.getCodePhase(),
+    _codeNco.getRotations(),
+    _codeNco.getFinePhase16(),
+    chipTravelDelay);
+    /* End Debug*/
 
     _carrNco.SetFrequency(_carrFreqBasis - (float)_doppler_hz);
     _codeNco.SetFrequency(_codeFreqBasis);

@@ -375,7 +375,7 @@ int main(int argc, char *argv[])
                             if (state.total_tracked_ms % 100 == 0)
                             {
                                 printf(
-                                    "[TRK] PRN %3d SNR:%5.1f dF:%8.1f Code:%7.2f Pi:% .0f Pq:% .0f Bit:%c\n",
+                                    "[TRK] PRN %3d SNR:%5.1f dF:%8.1f Code:%7.2f Pi:% 7.0f Pq:% 7.0f Bit:%c\n",
                                     state.prn,
                                     res.snr,
                                     res.doppler_hz,

@@ -122,20 +122,19 @@ uint32_t NCO::clk(void)
     return idx;
 }
 
-void NCO::InitializeEPLPipeline(double initialCodePhase, int chipTravelDelay)
+void NCO::InitializeEPLPipeline(float initialCodePhase, int chipTravelDelay)
 {
     EPLreg = 0ULL;
-    uint32_t base_rotation = (uint32_t)std::floor(initialCodePhase);
-    double fractional_part = initialCodePhase - std::floor(initialCodePhase);
+    uint32_t base_rotation = (uint32_t)std::floorf(initialCodePhase);
+    float fractional_part = initialCodePhase - std::floorf(initialCodePhase);
 
     m_phase = (uint32_t)(fractional_part * 4294967296.0);
 
-    // FIX: Match the private header variable name here
-    m_rotations = (base_rotation + chipTravelDelay) % 1023;
+    m_rotations = base_rotation % 1023;
 
     for (int i = 0; i < 64; ++i)
     {
-        int historical_offset = (int)m_rotations - 32 + i; // FIX: m_rotations
+        int historical_offset = (int)m_rotations - chipTravelDelay - 32 + i; // FIX: m_rotations
         while (historical_offset < 0)
             historical_offset += 1023;
         uint32_t chip_idx = (uint32_t)(historical_offset) % 1023;
