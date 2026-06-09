@@ -23,9 +23,7 @@ struct ChannelState
     G2INIT sv;
     std::unique_ptr<ChannelProcessor> processor;
     std::unique_ptr<NavDecoder> decoder;
-    std::deque<RawSample> sampleFIFO;
-    uint64_t totalSamplesPushed = 0;
-    uint64_t totalSamplesConsumed = 0;
+    uint64_t last_logged_sample_index = 0;
     uint64_t sampleCursor = 0; // Absolute sample index for tracking where we are in the stream
     uint64_t total_tracked_ms = 0;
     uint32_t handover_sample_tick = 0;
@@ -37,13 +35,6 @@ struct ChannelState
     {
         processor = std::make_unique<ChannelProcessor>(fs, result, s);
         decoder = std::make_unique<NavDecoder>(p);
-    }
-
-    void resetPipelines()
-    {
-        sampleFIFO.clear();
-        totalSamplesPushed = 0;
-        totalSamplesConsumed = 0;
     }
 };
 
@@ -199,7 +190,6 @@ int main(int argc, char *argv[])
 
                         auto &state = activeChannels.front();
 
-                        state.totalSamplesConsumed = 0;
                         state.total_tracked_ms = 0;
                         state.handover_sample_tick = (uint32_t)std::round(focusTarget->codePhase);
                         state.handover_unix_time = acq_ptr[0].unix_time;
@@ -262,6 +252,34 @@ int main(int argc, char *argv[])
                             break;
                         }
 
+                        uint64_t current_cursor = state.sampleCursor;
+                        uint64_t this_index = ms_ptr[0].sample_index;
+
+                        if (this_index != current_cursor)
+                        {
+                            printf(
+                                "[CURSOR MISMATCH] cursor=%llu sample_index=%llu\n",
+                                current_cursor,
+                                this_index);
+                        }
+
+                        if (state.last_logged_sample_index != 0)
+                        {
+                            uint64_t expected = state.last_logged_sample_index + ms_samples;
+
+                            if (this_index != expected)
+                            {
+                                printf(
+                                    "[TRACK GAP] expected=%llu got=%llu delta=%lld ms_delta=%.3f\n",
+                                    expected,
+                                    this_index,
+                                    (long long)(this_index - expected),
+                                    (double)(this_index - expected) / (double)ms_samples);
+                            }
+                        }
+
+                        state.last_logged_sample_index = this_index;
+
                         CorrelatorResult res =
                             state.processor->Correlator(
                                 ms_ptr,
@@ -311,56 +329,62 @@ int main(int argc, char *argv[])
                         // ---- Timing comes directly from ring ----
 
                         if (res.epoch_valid)
-{
-    const RawSample& sample = ms_ptr[0];
+                        {
+                            const RawSample &sample = ms_ptr[0];
 
-    uint64_t stable_fs_rate = (uint64_t)meta.fs_rate;
-    uint64_t sub_second_ticks = sample.sample_tick % stable_fs_rate;
-    uint32_t calculated_ms =
-        (uint32_t)((sub_second_ticks * 1000) / stable_fs_rate);
+                            uint64_t stable_fs_rate = (uint64_t)meta.fs_rate;
+                            uint64_t sub_second_ticks = sample.sample_tick % stable_fs_rate;
+                            uint32_t calculated_ms =
+                                (uint32_t)((sub_second_ticks * 1000) / stable_fs_rate);
 
-    t3.unixSecond = sample.unix_time;
-    t3.msCount = calculated_ms;
+                            t3.unixSecond = sample.unix_time;
+                            t3.msCount = calculated_ms;
 
-    // 1 symbol per 1 ms integration
-    const char symbol = (res.Pi > 0) ? '#' : '-';
+                            // 1 symbol per 1 ms integration
+                            const char symbol = (res.Pi > 0) ? '#' : '-';
 
-    if (file_logging_enabled && logged_ms < max_logged_ms)
-    {
-        fprintf(
-            out,
-            "%s ",
-            get_iso8601_timestamp(t3.unixSecond, t3.msCount).c_str());
+                            if (file_logging_enabled && logged_ms < max_logged_ms)
+                            {
+                                fprintf(
+                                    out,
+                                    "%s ",
+                                    get_iso8601_timestamp(t3.unixSecond, t3.msCount).c_str());
 
-        printCorrelatorData(out, res);
+                                printCorrelatorData(out, res);
 
-        fprintf(out, " | Bits: %c\n", symbol);
+                                fprintf(
+                                    out,
+                                    " tick=%u ms=%u idx=%llu ",
+                                    sample.sample_tick,
+                                    calculated_ms,
+                                    sample.sample_index);
+                                fprintf(out, " idx=%llu ", sample.sample_index);
+                                fprintf(out, " | Bits: %c\n", symbol);
 
-        logged_ms++;
+                                logged_ms++;
 
-        if (logged_ms == max_logged_ms)
-        {
-            fflush(out);
-            file_logging_enabled = false;
-            printf("[LOG] Stopped file logging after %llu ms\n", logged_ms);
-        }
-    }
+                                if (logged_ms == max_logged_ms)
+                                {
+                                    fflush(out);
+                                    file_logging_enabled = false;
+                                    printf("[LOG] Stopped file logging after %llu ms\n", logged_ms);
+                                }
+                            }
 
-    // Lightweight console sanity check
-    if (state.total_tracked_ms % 100 == 0)
-    {
-        printf(
-            "[TRK] PRN %3d SNR:%5.1f dF:%8.1f Code:%7.2f Pi:% .0f Pq:% .0f Bit:%c\n",
-            state.prn,
-            res.snr,
-            res.doppler_hz,
-            res.code_phase,
-            res.Pi,
-            res.Pq,
-            symbol);
-    }
-}
-
+                            // Lightweight console sanity check
+                            if (state.total_tracked_ms % 100 == 0)
+                            {
+                                printf(
+                                    "[TRK] PRN %3d SNR:%5.1f dF:%8.1f Code:%7.2f Pi:% .0f Pq:% .0f Bit:%c\n",
+                                    state.prn,
+                                    res.snr,
+                                    res.doppler_hz,
+                                    res.code_phase,
+                                    res.Pi,
+                                    res.Pq,
+                                    symbol);
+                            }
+                        }
                     }
                 }
             }
