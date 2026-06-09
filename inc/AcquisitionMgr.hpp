@@ -1,9 +1,9 @@
 #pragma once
 #include <vector>
 #include <cstdint>
-#include "L1IFUtil.hpp"
-#include "PCSEngine.hpp"        // Contains AcqResult and unpackL1IF
-#include "ElasticReceiver.h"    // Provides RFE_Header_t
+#include <algorithm>
+#include "L1IFUtil.hpp"  // Provides RFE_Header_t
+#include "PCSEngine.hpp" // Contains AcqResult and unpackL1IF
 
 class AcquisitionMgr {
 private:
@@ -14,10 +14,8 @@ private:
 public:
     AcquisitionMgr(PCSEngine& engine) : m_pcs(engine) {}
 
-    /**
-     * Executes acquisition using the block's specific metadata.
-     * Passing meta by const reference ensures we don't lose track of 
-     * critical timing info like sample_tick.
-     */
-    std::vector<AcqResult> run(const RFE_Header_t& meta, uint8_t* raw_block);
+    std::vector<AcqResult> run(
+        const RFE_Header_t& meta,
+        RawSample* samples,
+        size_t sample_count); 
 };

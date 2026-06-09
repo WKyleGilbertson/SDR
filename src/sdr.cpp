@@ -26,6 +26,7 @@ struct ChannelState
     std::deque<RawSample> sampleFIFO;
     uint64_t totalSamplesPushed = 0;
     uint64_t totalSamplesConsumed = 0;
+    uint64_t sampleCursor = 0; // Absolute sample index for tracking where we are in the stream
     uint64_t total_tracked_ms = 0;
     uint32_t handover_sample_tick = 0;
     uint32_t handover_unix_time = 0;
@@ -45,28 +46,6 @@ struct ChannelState
         totalSamplesConsumed = 0;
     }
 };
-
-void stuffFIFO(std::deque<RawSample> &fifo, const uint8_t *data, size_t count, uint32_t base_sample_tick, uint32_t unix_time)
-{
-    const UnpackEntry *lut = GetLUT_FNHN();
-    for (size_t i = 0; i < count; ++i)
-    {
-        const UnpackEntry &entry = lut[data[i]];
-        RawSample s0;
-        s0.i = static_cast<int8_t>(entry.s0.i);
-        s0.q = static_cast<int8_t>(entry.s0.q);
-        s0.sample_tick = base_sample_tick + (i * 2);
-        s0.unix_time = unix_time;
-        fifo.push_back(s0);
-
-        RawSample s1;
-        s1.i = static_cast<int8_t>(entry.s1.i);
-        s1.q = static_cast<int8_t>(entry.s1.q);
-        s1.sample_tick = base_sample_tick + (i * 2) + 1;
-        s1.unix_time = unix_time;
-        fifo.push_back(s1);
-    }
-} 
 
 int main(int argc, char *argv[])
 {
@@ -114,242 +93,265 @@ int main(int argc, char *argv[])
         AcquisitionMgr acqMgr(pcs);
         bool acq_needed = true;
         auto start_wall = std::chrono::steady_clock::now();
-        double total_data_time = 0;
+//        double total_data_time = 0;
         // ========================================================================
         // REFACTORED MASTER PROCESSING LOOP (STRICT STRIDE SYNCHRONIZATION)
         // ========================================================================
-        bool first = true;
-        //const int buffer_ms = 5;
-        const int buffer_ms = 1;
-        const size_t samples_per_ms = (size_t)(meta.fs_rate / 1000.0);
-        const size_t block_size = samples_per_ms * buffer_ms;
-        std::vector<uint8_t> block(block_size);
-        int epochs_captured = 0;
+//        bool first = true;
+        const int tracking_ms = 1;
+        const int acq_ms = 5;
+        const size_t ms_samples = (size_t)(meta.fs_rate / 1000.0);
+//        const size_t tracking_samples = ms_samples * tracking_ms;
+        const size_t acq_samples = ms_samples * acq_ms;
+        //        const size_t block_size = samples_per_ms * buffer_ms;
+        //        std::vector<uint8_t> block(block_size);
+        //        int epochs_captured = 0;
 
         std::cout << "[*] Starting real-time hardware tracking loop..." << std::endl;
 
-        while (true)
-        {
-            dbg_counter++;
-            if (dbg_counter % 200 == 0)
-            {
-                bool ok = rx.validate_ring_continuity();
-            if (ok) {
-                printf("[RING OK] "
-                "write=%llu\n", rx.get_write_index());
-            }
-            }
-        // ========================================================================
-        // 1. NETWORK INGEST: Strict Validation Gate
-        // ========================================================================
-        // Only unpack and append data if the network layer explicitly returns a fresh block.
-        // This stops stale data duplication at the second boundaries.
-        if (rx.get_ms_blocks(block.data(), meta, buffer_ms)) {
-            if (first) {
-                start_wall = std::chrono::steady_clock::now();
-                first = false;
-            }
-            stuffFIFO(rxState.sampleFIFO, block.data(), block_size, meta.sample_tick, meta.unix_time);
-            rxState.totalSamplesPushed += block_size * 2;
-            // Compare //
-            RawSample* ring_ptr = nullptr;
-std::vector<RawSample> scratch;
-
-uint64_t ring_cursor =
-    rx.get_write_index() -
-    rxState.sampleFIFO.size();
-
-if (rx.get_window(
-        ring_cursor,
-        ring_ptr,
-        32,
-        scratch))
+while (true)
 {
-    for (int i = 0; i < 32; ++i)
+    dbg_counter++;
+
+    if (dbg_counter % 200 == 0)
     {
-        const auto& fifo =
-            rxState.sampleFIFO[i];
-
-        const auto& ring =
-            ring_ptr[i];
-
-        if (fifo.sample_tick !=
-            ring.sample_tick)
+        if (rx.validate_ring_continuity())
         {
-            printf(
-                "[MISMATCH] "
-                "%u vs %u delta: %d\n",
-                fifo.sample_tick,
-                ring.sample_tick,
-                (int)(fifo.sample_tick - ring.sample_tick));
-
-            break;
+            printf("[RING OK] write=%llu\n", rx.get_write_index());
         }
     }
+
+    if (acq_needed)
+    {
+        uint64_t newest = rx.get_write_index();
+
+if (newest < acq_samples + ms_samples)
+{
+    std::this_thread::sleep_for(std::chrono::microseconds(250));
+    continue;
 }
-            // End Compare //
-        } else {
-            // No new data waiting on socket: drop thread pressure and retry ingest
-            std::this_thread::sleep_for(std::chrono::microseconds(250));
-            continue;
-        }
 
-            // 2. ACQUISITION HANDOVER: Guarded handover baseline mapping
-            if (acq_needed)
+// Start with latest complete 5 ms region.
+uint64_t acq_cursor = newest - acq_samples;
+
+RawSample* acq_ptr = nullptr;
+std::vector<RawSample> acq_window;
+
+if (!rx.get_window(acq_cursor, acq_ptr, (unsigned int)acq_samples, acq_window))
+{
+    std::this_thread::sleep_for(std::chrono::microseconds(250));
+    continue;
+}
+
+// Align by hardware sample_tick, not ring index.
+uint32_t tick_mod = acq_ptr[0].sample_tick % (uint32_t)ms_samples;
+
+if (tick_mod != 0)
+{
+    if (acq_cursor < tick_mod)
+    {
+        std::this_thread::sleep_for(std::chrono::microseconds(250));
+        continue;
+    }
+
+    acq_cursor -= tick_mod;
+
+    if (!rx.get_window(acq_cursor, acq_ptr, (unsigned int)acq_samples, acq_window))
+    {
+        std::this_thread::sleep_for(std::chrono::microseconds(250));
+        continue;
+    }
+}
+
+printf(
+    "[ACQ] tick=%u mod=%u samples=%zu cursor=%llu\n",
+    acq_ptr[0].sample_tick,
+    acq_ptr[0].sample_tick % (uint32_t)ms_samples,
+    acq_samples,
+    acq_cursor);
+
+auto results = acqMgr.run(meta, acq_ptr, acq_samples);
+
+
+        if (!results.empty())
+        {
+            activeChannels.clear();
+
+            const AcqResult* focusTarget = nullptr;
+
+            for (const auto& res : results)
             {
-                if (rxState.sampleFIFO.size() >= block_size * 2)
+                if (res.prn == (int)focusPRN)
                 {
-                    auto results = acqMgr.run(meta, block.data());
-                    t3 = get_timeData(meta.unix_time, meta.sample_tick, meta.fs_rate);
-
-                    if (!results.empty())
-                    {
-                        activeChannels.clear();
-                        const AcqResult *focusTarget = nullptr;
-
-                        for (const auto &res : results)
-                        {
-                            if (res.prn == (int)focusPRN)
-                            {
-                                printf(" LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f <--- Focus\n", res.prn, res.snr, res.bin, res.codePhase);
-                                focusTarget = &res;
-                            }
-                            else
-                            {
-                                printf(" LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f\n", res.prn, res.snr, res.bin, res.codePhase);
-                            }
-                        }
-
-                        if (focusTarget != nullptr)
-                        {
-                            activeChannels.emplace_back(focusTarget->prn, (double)meta.fs_rate, *focusTarget, pcs.getSV(focusTarget->prn));
-                            activeChannels.back().decoder->setFocus(true);
-
-                            auto &state = activeChannels.front();
-                            state.totalSamplesPushed = rxState.totalSamplesPushed;
-                            state.totalSamplesConsumed = 0;
-                            state.handover_sample_tick = (uint32_t)std::round(focusTarget->codePhase);
-                            state.handover_unix_time = meta.unix_time;
-
-                            acq_needed = false;
-                            printf("[*] HANDOVER SUCCESS: Channel anchored to stream timeline. No skips.\n");
-                            continue;
-                        }
-                        else
-                        {
-                            rxState.resetPipelines();
-                            continue;
-                        }
-                    }
+                    printf(" LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f <--- Focus\n",
+                           res.prn, res.snr, res.bin, res.codePhase);
+                    focusTarget = &res;
+                }
+                else
+                {
+                    printf(" LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f\n",
+                           res.prn, res.snr, res.bin, res.codePhase);
                 }
             }
 
-         // ========================================================================
-        // 3. MULTI-CHANNEL PROCESSING: Bounded Sample Architecture
-        // ========================================================================
-        if (!activeChannels.empty()) {
-            const size_t HARDWARE_MS_BLOCK = 16368;
-            const size_t TOTAL_BLOCK_SAMPLES = buffer_ms * HARDWARE_MS_BLOCK;
+            if (focusTarget != nullptr)
+            {
+                activeChannels.emplace_back(
+                    focusTarget->prn,
+                    (double)meta.fs_rate,
+                    *focusTarget,
+                    pcs.getSV(focusTarget->prn));
 
-            while (rxState.sampleFIFO.size() >= TOTAL_BLOCK_SAMPLES) {
-                
-                for (auto &state : activeChannels) {
-                    if (state.prn == (int)focusPRN) {
+                activeChannels.back().decoder->setFocus(true);
 
-                        // Feed the correlator 1 ms at a time across your 5 ms network block
-                        for (int ms_step = 0; ms_step < buffer_ms; ++ms_step) {
-                            
-                            // Slice out a clean 1ms snapshot starting exactly from the current step offset
-                            auto startIt = rxState.sampleFIFO.begin() + (ms_step * HARDWARE_MS_BLOCK);
-                            std::vector<RawSample> flatSlice(startIt, startIt + HARDWARE_MS_BLOCK);
+                auto& state = activeChannels.front();
 
-                            // Feed exactly 1ms of data to the correlator
-                            CorrelatorResult res = state.processor->Correlator(flatSlice.data(), flatSlice.size());
-                            
-                            // Grab a strict reference to the last sample inside this 1ms processing pass
-                            const RawSample &lastSample = flatSlice.back();
+                state.totalSamplesConsumed = 0;
+                state.total_tracked_ms = 0;
+                state.handover_sample_tick = (uint32_t)std::round(focusTarget->codePhase);
+                state.handover_unix_time = acq_ptr[0].unix_time;
 
-                            // Codephase tracking relative to the sample clock layout
-                            double activeCodeFreq = 1023000.0 + (double)res.doppler_hz / 1540.0;
+                // Important: add this field to ChannelState next.
+                state.sampleCursor = acq_cursor + acq_samples;
 
-                            if (res.rollover_sample_index_in_block != -1) {
-                                double dynamic_samples_per_chip = (double)(samples_per_ms * 1000.0) / activeCodeFreq;
-                                double chips_to_end = (double)res.rollover_sample_index_in_block / dynamic_samples_per_chip;
-                                state.result.codePhase = std::fmod(1023.0 - chips_to_end, 1023.0);
-                            } else {
-                                double chips_advanced = (double)HARDWARE_MS_BLOCK * activeCodeFreq / (double)(samples_per_ms * 1000.0);
-                                state.result.codePhase = std::fmod(state.result.codePhase + chips_advanced, 1023.0);
-                            }
+                acq_needed = false;
 
-                            res.code_phase = state.result.codePhase;
-                            state.handover_sample_tick = (uint32_t)std::round(res.code_phase);
+                printf("[*] HANDOVER SUCCESS: acquisition window [%llu, %llu)\n",
+                       acq_cursor,
+                       acq_cursor + acq_samples);
 
-                                                // Telemetry logging driven entirely by the physical sample stamps
-                                                // Telemetry logging driven entirely by the physical sample stamps
-                        if (res.epoch_valid) {
-                            epochs_captured++;
-
-                            // 1. Pull both baseline tracking components from the current 1ms slice return
-                            const RawSample &sliceStartSample = flatSlice.front();
-                            uint64_t sample_unix_time = sliceStartSample.unix_time;
-                            uint64_t current_tick = sliceStartSample.sample_tick;
-                            uint64_t stable_fs_rate = (uint64_t)samples_per_ms * 1000;
-
-                            // 2. Direct Math: Convert the resetting sub-second tick count to milliseconds (0-999)
-                            uint64_t sub_second_ticks = current_tick % stable_fs_rate;
-                            uint32_t calculated_ms = (uint32_t)((sub_second_ticks * 1000) / stable_fs_rate);
-
-                            // 3. COMBINED HARDWARE TIMING ENGINE
-                            uint64_t final_seconds = sample_unix_time;
-                            const RawSample &packetStartSample = rxState.sampleFIFO.front();
-
-                            // Guard A: The hardware clock reset to zero mid-packet block
-                            if (current_tick < packetStartSample.sample_tick) {
-                                final_seconds += 1;
-                            }
-
-                            // Guard B: Track the absolute millisecond progression across your 5ms chunks
-                            // to ensure that consecutive blocks never allow a 1-second backward step.
-                            static uint64_t last_printed_epoch_ms = 0;
-                            uint64_t current_epoch_ms = (final_seconds * 1000) + calculated_ms;
-
-                            if (last_printed_epoch_ms > 0 && current_epoch_ms < last_printed_epoch_ms) {
-                                // If the combined time tries to step backward, force the seconds column forward
-                                final_seconds += 1;
-                                current_epoch_ms += 1000;
-                            }
-                            last_printed_epoch_ms = current_epoch_ms;
-
-                            t3.unixSecond = final_seconds;
-                            t3.msCount = calculated_ms;
-
-                            fprintf(out, "%s ", get_iso8601_timestamp(t3.unixSecond, t3.msCount).c_str());
-                            printCorrelatorData(out, res);
-                            fprintf(out, " | Bits: %c\n", (res.Pi > 0) ? '#' : '-');
-
-                            if (epochs_captured % 100 == 0) {
-                                printCorrelatorData(stdout, res);
-                                fprintf(stdout, "\n");
-                                fflush(stdout);
-                            }
-                        }
-                        } // End 1ms step loop
-                    }
-                } // End channel loop
-
-                // 4. STREAM CLEANUP: Evict the evaluated block completely from the front
-                rxState.sampleFIFO.erase(rxState.sampleFIFO.begin(), rxState.sampleFIFO.begin() + TOTAL_BLOCK_SAMPLES);
-                
-                for (auto &state : activeChannels) {
-                    state.totalSamplesConsumed = 0;
-                }
-            } // End drainage while loop
-
-            total_data_time += (double)buffer_ms / 1000.0;
-        } else {
-            std::this_thread::sleep_for(std::chrono::microseconds(500));
+                continue;
+            }
         }
-        } // End while(true)
+
+        continue;
+    }
+
+    // Tracking goes here later.
+    std::this_thread::sleep_for(std::chrono::microseconds(250));
+} // End of while(true)
+            // ========================================================================
+            // 3. MULTI-CHANNEL PROCESSING: Bounded Sample Architecture
+            // ========================================================================
+            /*
+            if (!activeChannels.empty())
+            {
+                const size_t HARDWARE_MS_BLOCK = 16368;
+                const size_t TOTAL_BLOCK_SAMPLES = buffer_ms * HARDWARE_MS_BLOCK;
+
+                while (rxState.sampleFIFO.size() >= TOTAL_BLOCK_SAMPLES)
+                {
+
+                    for (auto &state : activeChannels)
+                    {
+                        if (state.prn == (int)focusPRN)
+                        {
+
+                            // Feed the correlator 1 ms at a time across your 5 ms network block
+                            for (int ms_step = 0; ms_step < buffer_ms; ++ms_step)
+                            {
+
+                                // Slice out a clean 1ms snapshot starting exactly from the current step offset
+                                auto startIt = rxState.sampleFIFO.begin() + (ms_step * HARDWARE_MS_BLOCK);
+                                std::vector<RawSample> flatSlice(startIt, startIt + HARDWARE_MS_BLOCK);
+
+                                // Feed exactly 1ms of data to the correlator
+                                CorrelatorResult res = state.processor->Correlator(flatSlice.data(), flatSlice.size());
+
+                                // Grab a strict reference to the last sample inside this 1ms processing pass
+                                const RawSample &lastSample = flatSlice.back();
+
+                                // Codephase tracking relative to the sample clock layout
+                                double activeCodeFreq = 1023000.0 + (double)res.doppler_hz / 1540.0;
+
+                                if (res.rollover_sample_index_in_block != -1)
+                                {
+                                    double dynamic_samples_per_chip = (double)(samples_per_ms * 1000.0) / activeCodeFreq;
+                                    double chips_to_end = (double)res.rollover_sample_index_in_block / dynamic_samples_per_chip;
+                                    state.result.codePhase = std::fmod(1023.0 - chips_to_end, 1023.0);
+                                }
+                                else
+                                {
+                                    double chips_advanced = (double)HARDWARE_MS_BLOCK * activeCodeFreq / (double)(samples_per_ms * 1000.0);
+                                    state.result.codePhase = std::fmod(state.result.codePhase + chips_advanced, 1023.0);
+                                }
+
+                                res.code_phase = state.result.codePhase;
+                                state.handover_sample_tick = (uint32_t)std::round(res.code_phase);
+
+                                // Telemetry logging driven entirely by the physical sample stamps
+                                // Telemetry logging driven entirely by the physical sample stamps
+                                if (res.epoch_valid)
+                                {
+                                    epochs_captured++;
+
+                                    // 1. Pull both baseline tracking components from the current 1ms slice return
+                                    const RawSample &sliceStartSample = flatSlice.front();
+                                    uint64_t sample_unix_time = sliceStartSample.unix_time;
+                                    uint64_t current_tick = sliceStartSample.sample_tick;
+                                    uint64_t stable_fs_rate = (uint64_t)samples_per_ms * 1000;
+
+                                    // 2. Direct Math: Convert the resetting sub-second tick count to milliseconds (0-999)
+                                    uint64_t sub_second_ticks = current_tick % stable_fs_rate;
+                                    uint32_t calculated_ms = (uint32_t)((sub_second_ticks * 1000) / stable_fs_rate);
+
+                                    // 3. COMBINED HARDWARE TIMING ENGINE
+                                    uint64_t final_seconds = sample_unix_time;
+                                    const RawSample &packetStartSample = rxState.sampleFIFO.front();
+
+                                    // Guard A: The hardware clock reset to zero mid-packet block
+                                    if (current_tick < packetStartSample.sample_tick)
+                                    {
+                                        final_seconds += 1;
+                                    }
+
+                                    // Guard B: Track the absolute millisecond progression across your 5ms chunks
+                                    // to ensure that consecutive blocks never allow a 1-second backward step.
+                                    static uint64_t last_printed_epoch_ms = 0;
+                                    uint64_t current_epoch_ms = (final_seconds * 1000) + calculated_ms;
+
+                                    if (last_printed_epoch_ms > 0 && current_epoch_ms < last_printed_epoch_ms)
+                                    {
+                                        // If the combined time tries to step backward, force the seconds column forward
+                                        final_seconds += 1;
+                                        current_epoch_ms += 1000;
+                                    }
+                                    last_printed_epoch_ms = current_epoch_ms;
+
+                                    t3.unixSecond = final_seconds;
+                                    t3.msCount = calculated_ms;
+
+                                    fprintf(out, "%s ", get_iso8601_timestamp(t3.unixSecond, t3.msCount).c_str());
+                                    printCorrelatorData(out, res);
+                                    fprintf(out, " | Bits: %c\n", (res.Pi > 0) ? '#' : '-');
+
+                                    if (epochs_captured % 100 == 0)
+                                    {
+                                        printCorrelatorData(stdout, res);
+                                        fprintf(stdout, "\n");
+                                        fflush(stdout);
+                                    }
+                                }
+                            } // End 1ms step loop
+                        }
+                    } // End channel loop
+
+                    // 4. STREAM CLEANUP: Evict the evaluated block completely from the front
+                    rxState.sampleFIFO.erase(rxState.sampleFIFO.begin(), rxState.sampleFIFO.begin() + TOTAL_BLOCK_SAMPLES);
+
+                    for (auto &state : activeChannels)
+                    {
+                        state.totalSamplesConsumed = 0;
+                    }
+                } // End drainage while loop
+
+                total_data_time += (double)buffer_ms / 1000.0;
+            } 
+            else
+            {
+                std::this_thread::sleep_for(std::chrono::microseconds(500));
+            } */
+//        } // End while(true)
     }
     catch (const std::exception &e)
     {
