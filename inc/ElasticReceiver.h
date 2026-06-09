@@ -7,21 +7,6 @@
 #include <ws2tcpip.h>
 #include "L1IFUtil.hpp"
 
-/*
-#pragma pack(push, 1)
-struct RFE_Header_t
-{
-    uint8_t pkt_type;
-    uint32_t fs_rate;
-    uint32_t unix_time;
-    uint32_t sample_tick;
-    uint32_t seq_num;
-    char dev_tag[16];
-    uint16_t payload_len;
-};
-#pragma pack(pop)
-*/
-
 struct MillisecondBlock
 {
     RFE_Header_t header;

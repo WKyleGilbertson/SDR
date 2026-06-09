@@ -61,6 +61,9 @@ int main(int argc, char *argv[])
     RFE_Header_t meta = {};
     TimeTrio t3;
     static int dbg_counter = 0;
+    const uint64_t max_logged_ms = 250;
+    uint64_t logged_ms = 0;
+    bool file_logging_enabled = true;
     std::list<ChannelState> activeChannels;
     ChannelState rxState(0, 16368000.0, AcqResult(), G2INIT());
 
@@ -93,266 +96,277 @@ int main(int argc, char *argv[])
         AcquisitionMgr acqMgr(pcs);
         bool acq_needed = true;
         auto start_wall = std::chrono::steady_clock::now();
-//        double total_data_time = 0;
-        // ========================================================================
-        // REFACTORED MASTER PROCESSING LOOP (STRICT STRIDE SYNCHRONIZATION)
-        // ========================================================================
-//        bool first = true;
         const int tracking_ms = 1;
         const int acq_ms = 5;
         const size_t ms_samples = (size_t)(meta.fs_rate / 1000.0);
-//        const size_t tracking_samples = ms_samples * tracking_ms;
         const size_t acq_samples = ms_samples * acq_ms;
-        //        const size_t block_size = samples_per_ms * buffer_ms;
-        //        std::vector<uint8_t> block(block_size);
-        //        int epochs_captured = 0;
 
         std::cout << "[*] Starting real-time hardware tracking loop..." << std::endl;
 
-while (true)
-{
-    dbg_counter++;
-
-    if (dbg_counter % 200 == 0)
-    {
-        if (rx.validate_ring_continuity())
+        while (true)
         {
-            printf("[RING OK] write=%llu\n", rx.get_write_index());
-        }
-    }
+            dbg_counter++;
 
-    if (acq_needed)
-    {
-        uint64_t newest = rx.get_write_index();
-
-if (newest < acq_samples + ms_samples)
-{
-    std::this_thread::sleep_for(std::chrono::microseconds(250));
-    continue;
-}
-
-// Start with latest complete 5 ms region.
-uint64_t acq_cursor = newest - acq_samples;
-
-RawSample* acq_ptr = nullptr;
-std::vector<RawSample> acq_window;
-
-if (!rx.get_window(acq_cursor, acq_ptr, (unsigned int)acq_samples, acq_window))
-{
-    std::this_thread::sleep_for(std::chrono::microseconds(250));
-    continue;
-}
-
-// Align by hardware sample_tick, not ring index.
-uint32_t tick_mod = acq_ptr[0].sample_tick % (uint32_t)ms_samples;
-
-if (tick_mod != 0)
-{
-    if (acq_cursor < tick_mod)
-    {
-        std::this_thread::sleep_for(std::chrono::microseconds(250));
-        continue;
-    }
-
-    acq_cursor -= tick_mod;
-
-    if (!rx.get_window(acq_cursor, acq_ptr, (unsigned int)acq_samples, acq_window))
-    {
-        std::this_thread::sleep_for(std::chrono::microseconds(250));
-        continue;
-    }
-}
-
-printf(
-    "[ACQ] tick=%u mod=%u samples=%zu cursor=%llu\n",
-    acq_ptr[0].sample_tick,
-    acq_ptr[0].sample_tick % (uint32_t)ms_samples,
-    acq_samples,
-    acq_cursor);
-
-auto results = acqMgr.run(meta, acq_ptr, acq_samples);
-
-
-        if (!results.empty())
-        {
-            activeChannels.clear();
-
-            const AcqResult* focusTarget = nullptr;
-
-            for (const auto& res : results)
+            if (dbg_counter % 200 == 0)
             {
-                if (res.prn == (int)focusPRN)
+                if (rx.validate_ring_continuity())
                 {
-                    printf(" LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f <--- Focus\n",
-                           res.prn, res.snr, res.bin, res.codePhase);
-                    focusTarget = &res;
-                }
-                else
-                {
-                    printf(" LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f\n",
-                           res.prn, res.snr, res.bin, res.codePhase);
+                    printf("[RING OK] write=%llu\n", rx.get_write_index());
                 }
             }
 
-            if (focusTarget != nullptr)
+            if (acq_needed)
             {
-                activeChannels.emplace_back(
-                    focusTarget->prn,
-                    (double)meta.fs_rate,
-                    *focusTarget,
-                    pcs.getSV(focusTarget->prn));
+                uint64_t newest = rx.get_write_index();
 
-                activeChannels.back().decoder->setFocus(true);
+                if (newest < acq_samples + ms_samples)
+                {
+                    std::this_thread::sleep_for(std::chrono::microseconds(250));
+                    continue;
+                }
 
-                auto& state = activeChannels.front();
+                // Start with latest complete 5 ms region.
+                uint64_t acq_cursor = newest - acq_samples;
 
-                state.totalSamplesConsumed = 0;
-                state.total_tracked_ms = 0;
-                state.handover_sample_tick = (uint32_t)std::round(focusTarget->codePhase);
-                state.handover_unix_time = acq_ptr[0].unix_time;
+                RawSample *acq_ptr = nullptr;
+                std::vector<RawSample> acq_window;
 
-                // Important: add this field to ChannelState next.
-                state.sampleCursor = acq_cursor + acq_samples;
+                if (!rx.get_window(acq_cursor, acq_ptr, (unsigned int)acq_samples, acq_window))
+                {
+                    std::this_thread::sleep_for(std::chrono::microseconds(250));
+                    continue;
+                }
 
-                acq_needed = false;
+                // Align by hardware sample_tick, not ring index.
+                uint32_t tick_mod = acq_ptr[0].sample_tick % (uint32_t)ms_samples;
 
-                printf("[*] HANDOVER SUCCESS: acquisition window [%llu, %llu)\n",
-                       acq_cursor,
-                       acq_cursor + acq_samples);
+                if (tick_mod != 0)
+                {
+                    if (acq_cursor < tick_mod)
+                    {
+                        std::this_thread::sleep_for(std::chrono::microseconds(250));
+                        continue;
+                    }
+
+                    acq_cursor -= tick_mod;
+
+                    if (!rx.get_window(acq_cursor, acq_ptr, (unsigned int)acq_samples, acq_window))
+                    {
+                        std::this_thread::sleep_for(std::chrono::microseconds(250));
+                        continue;
+                    }
+                }
+
+                printf(
+                    "[ACQ] tick=%u mod=%u samples=%zu cursor=%llu\n",
+                    acq_ptr[0].sample_tick,
+                    acq_ptr[0].sample_tick % (uint32_t)ms_samples,
+                    acq_samples,
+                    acq_cursor);
+
+                auto results = acqMgr.run(meta, acq_ptr, acq_samples);
+
+                if (!results.empty())
+                {
+                    activeChannels.clear();
+
+                    const AcqResult *focusTarget = nullptr;
+
+                    for (const auto &res : results)
+                    {
+                        if (res.prn == (int)focusPRN)
+                        {
+                            printf(" LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f <--- Focus\n",
+                                   res.prn, res.snr, res.bin, res.codePhase);
+                            focusTarget = &res;
+                        }
+                        else
+                        {
+                            printf(" LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f\n",
+                                   res.prn, res.snr, res.bin, res.codePhase);
+                        }
+                    }
+
+                    if (focusTarget != nullptr)
+                    {
+                        activeChannels.emplace_back(
+                            focusTarget->prn,
+                            (double)meta.fs_rate,
+                            *focusTarget,
+                            pcs.getSV(focusTarget->prn));
+
+                        activeChannels.back().decoder->setFocus(true);
+
+                        auto &state = activeChannels.front();
+
+                        state.totalSamplesConsumed = 0;
+                        state.total_tracked_ms = 0;
+                        state.handover_sample_tick = (uint32_t)std::round(focusTarget->codePhase);
+                        state.handover_unix_time = acq_ptr[0].unix_time;
+
+                        // Important: add this field to ChannelState next.
+                        //                        state.sampleCursor = acq_cursor + acq_samples;
+                        uint64_t write = rx.get_write_index();
+                        uint64_t aligned_write = write - (write % ms_samples);
+
+                        state.sampleCursor = aligned_write - ms_samples;
+
+                        acq_needed = false;
+
+                        printf("[*] HANDOVER SUCCESS: acquisition window [%llu, %llu)\n",
+                               acq_cursor,
+                               acq_cursor + acq_samples);
+
+                        continue;
+                    }
+                }
 
                 continue;
             }
-        }
-
-        continue;
-    }
-
-    // Tracking goes here later.
-    std::this_thread::sleep_for(std::chrono::microseconds(250));
-} // End of while(true)
-            // ========================================================================
-            // 3. MULTI-CHANNEL PROCESSING: Bounded Sample Architecture
-            // ========================================================================
-            /*
+            /* Tracking goes here */
             if (!activeChannels.empty())
             {
-                const size_t HARDWARE_MS_BLOCK = 16368;
-                const size_t TOTAL_BLOCK_SAMPLES = buffer_ms * HARDWARE_MS_BLOCK;
-
-                while (rxState.sampleFIFO.size() >= TOTAL_BLOCK_SAMPLES)
+                for (auto &state : activeChannels)
                 {
+                    if (state.prn != (int)focusPRN)
+                        continue;
 
-                    for (auto &state : activeChannels)
+                    uint64_t write = rx.get_write_index();
+                    uint64_t ring_capacity = ms_samples * 250;
+
+                    if (state.sampleCursor + ms_samples < write - ring_capacity)
                     {
-                        if (state.prn == (int)focusPRN)
-                        {
+                        printf(
+                            "[TRK STALE] PRN %d cursor=%llu write=%llu capacity=%llu -- reacquire\n",
+                            state.prn,
+                            state.sampleCursor,
+                            write,
+                            ring_capacity);
 
-                            // Feed the correlator 1 ms at a time across your 5 ms network block
-                            for (int ms_step = 0; ms_step < buffer_ms; ++ms_step)
-                            {
-
-                                // Slice out a clean 1ms snapshot starting exactly from the current step offset
-                                auto startIt = rxState.sampleFIFO.begin() + (ms_step * HARDWARE_MS_BLOCK);
-                                std::vector<RawSample> flatSlice(startIt, startIt + HARDWARE_MS_BLOCK);
-
-                                // Feed exactly 1ms of data to the correlator
-                                CorrelatorResult res = state.processor->Correlator(flatSlice.data(), flatSlice.size());
-
-                                // Grab a strict reference to the last sample inside this 1ms processing pass
-                                const RawSample &lastSample = flatSlice.back();
-
-                                // Codephase tracking relative to the sample clock layout
-                                double activeCodeFreq = 1023000.0 + (double)res.doppler_hz / 1540.0;
-
-                                if (res.rollover_sample_index_in_block != -1)
-                                {
-                                    double dynamic_samples_per_chip = (double)(samples_per_ms * 1000.0) / activeCodeFreq;
-                                    double chips_to_end = (double)res.rollover_sample_index_in_block / dynamic_samples_per_chip;
-                                    state.result.codePhase = std::fmod(1023.0 - chips_to_end, 1023.0);
-                                }
-                                else
-                                {
-                                    double chips_advanced = (double)HARDWARE_MS_BLOCK * activeCodeFreq / (double)(samples_per_ms * 1000.0);
-                                    state.result.codePhase = std::fmod(state.result.codePhase + chips_advanced, 1023.0);
-                                }
-
-                                res.code_phase = state.result.codePhase;
-                                state.handover_sample_tick = (uint32_t)std::round(res.code_phase);
-
-                                // Telemetry logging driven entirely by the physical sample stamps
-                                // Telemetry logging driven entirely by the physical sample stamps
-                                if (res.epoch_valid)
-                                {
-                                    epochs_captured++;
-
-                                    // 1. Pull both baseline tracking components from the current 1ms slice return
-                                    const RawSample &sliceStartSample = flatSlice.front();
-                                    uint64_t sample_unix_time = sliceStartSample.unix_time;
-                                    uint64_t current_tick = sliceStartSample.sample_tick;
-                                    uint64_t stable_fs_rate = (uint64_t)samples_per_ms * 1000;
-
-                                    // 2. Direct Math: Convert the resetting sub-second tick count to milliseconds (0-999)
-                                    uint64_t sub_second_ticks = current_tick % stable_fs_rate;
-                                    uint32_t calculated_ms = (uint32_t)((sub_second_ticks * 1000) / stable_fs_rate);
-
-                                    // 3. COMBINED HARDWARE TIMING ENGINE
-                                    uint64_t final_seconds = sample_unix_time;
-                                    const RawSample &packetStartSample = rxState.sampleFIFO.front();
-
-                                    // Guard A: The hardware clock reset to zero mid-packet block
-                                    if (current_tick < packetStartSample.sample_tick)
-                                    {
-                                        final_seconds += 1;
-                                    }
-
-                                    // Guard B: Track the absolute millisecond progression across your 5ms chunks
-                                    // to ensure that consecutive blocks never allow a 1-second backward step.
-                                    static uint64_t last_printed_epoch_ms = 0;
-                                    uint64_t current_epoch_ms = (final_seconds * 1000) + calculated_ms;
-
-                                    if (last_printed_epoch_ms > 0 && current_epoch_ms < last_printed_epoch_ms)
-                                    {
-                                        // If the combined time tries to step backward, force the seconds column forward
-                                        final_seconds += 1;
-                                        current_epoch_ms += 1000;
-                                    }
-                                    last_printed_epoch_ms = current_epoch_ms;
-
-                                    t3.unixSecond = final_seconds;
-                                    t3.msCount = calculated_ms;
-
-                                    fprintf(out, "%s ", get_iso8601_timestamp(t3.unixSecond, t3.msCount).c_str());
-                                    printCorrelatorData(out, res);
-                                    fprintf(out, " | Bits: %c\n", (res.Pi > 0) ? '#' : '-');
-
-                                    if (epochs_captured % 100 == 0)
-                                    {
-                                        printCorrelatorData(stdout, res);
-                                        fprintf(stdout, "\n");
-                                        fflush(stdout);
-                                    }
-                                }
-                            } // End 1ms step loop
-                        }
-                    } // End channel loop
-
-                    // 4. STREAM CLEANUP: Evict the evaluated block completely from the front
-                    rxState.sampleFIFO.erase(rxState.sampleFIFO.begin(), rxState.sampleFIFO.begin() + TOTAL_BLOCK_SAMPLES);
-
-                    for (auto &state : activeChannels)
-                    {
-                        state.totalSamplesConsumed = 0;
+                        acq_needed = true;
+                        activeChannels.clear();
+                        break;
                     }
-                } // End drainage while loop
 
-                total_data_time += (double)buffer_ms / 1000.0;
-            } 
-            else
-            {
-                std::this_thread::sleep_for(std::chrono::microseconds(500));
-            } */
-//        } // End while(true)
+                    while (rx.get_write_index() >= state.sampleCursor + ms_samples)
+                    {
+                        RawSample *ms_ptr = nullptr;
+                        std::vector<RawSample> ms_window;
+
+                        if (!rx.get_window(
+                                state.sampleCursor,
+                                ms_ptr,
+                                (unsigned int)ms_samples,
+                                ms_window))
+                        {
+                            break;
+                        }
+
+                        CorrelatorResult res =
+                            state.processor->Correlator(
+                                ms_ptr,
+                                (unsigned int)ms_samples);
+
+                        state.sampleCursor += ms_samples;
+                        state.total_tracked_ms++;
+
+                        // ---- Existing code phase update ----
+
+                        double activeCodeFreq =
+                            1023000.0 +
+                            (double)res.doppler_hz / 1540.0;
+
+                        if (res.rollover_sample_index_in_block != -1)
+                        {
+                            double dynamic_samples_per_chip =
+                                (double)(ms_samples * 1000.0) /
+                                activeCodeFreq;
+
+                            double chips_to_end =
+                                (double)res.rollover_sample_index_in_block /
+                                dynamic_samples_per_chip;
+
+                            state.result.codePhase =
+                                std::fmod(
+                                    1023.0 - chips_to_end,
+                                    1023.0);
+                        }
+                        else
+                        {
+                            double chips_advanced =
+                                (double)ms_samples *
+                                activeCodeFreq /
+                                (double)(meta.fs_rate);
+
+                            state.result.codePhase =
+                                std::fmod(
+                                    state.result.codePhase +
+                                        chips_advanced,
+                                    1023.0);
+                        }
+
+                        res.code_phase =
+                            state.result.codePhase;
+
+                        // ---- Timing comes directly from ring ----
+
+                        if (res.epoch_valid)
+{
+    const RawSample& sample = ms_ptr[0];
+
+    uint64_t stable_fs_rate = (uint64_t)meta.fs_rate;
+    uint64_t sub_second_ticks = sample.sample_tick % stable_fs_rate;
+    uint32_t calculated_ms =
+        (uint32_t)((sub_second_ticks * 1000) / stable_fs_rate);
+
+    t3.unixSecond = sample.unix_time;
+    t3.msCount = calculated_ms;
+
+    // 1 symbol per 1 ms integration
+    const char symbol = (res.Pi > 0) ? '#' : '-';
+
+    if (file_logging_enabled && logged_ms < max_logged_ms)
+    {
+        fprintf(
+            out,
+            "%s ",
+            get_iso8601_timestamp(t3.unixSecond, t3.msCount).c_str());
+
+        printCorrelatorData(out, res);
+
+        fprintf(out, " | Bits: %c\n", symbol);
+
+        logged_ms++;
+
+        if (logged_ms == max_logged_ms)
+        {
+            fflush(out);
+            file_logging_enabled = false;
+            printf("[LOG] Stopped file logging after %llu ms\n", logged_ms);
+        }
     }
+
+    // Lightweight console sanity check
+    if (state.total_tracked_ms % 100 == 0)
+    {
+        printf(
+            "[TRK] PRN %3d SNR:%5.1f dF:%8.1f Code:%7.2f Pi:% .0f Pq:% .0f Bit:%c\n",
+            state.prn,
+            res.snr,
+            res.doppler_hz,
+            res.code_phase,
+            res.Pi,
+            res.Pq,
+            symbol);
+    }
+}
+
+                    }
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::microseconds(250));
+        } // End of while(true)
+    } // End try
     catch (const std::exception &e)
     {
         std::cerr << "\n[!] Exception: " << e.what() << std::endl;

@@ -123,24 +123,6 @@ void ElasticReceiver::ingest_thread()
             _staging_buffer.insert(_staging_buffer.end(), payload, payload + payload_len);
             _staging_count++;
 
-            /* Added by ChatGPT*/
-            // Push to queue once a full millisecond is staged.. unpacked
-            /*
-            if (_staging_count >= _packets_per_ms)
-            {
-                unpack_to_ring(
-                    _staging_buffer.data(),
-                    _staging_buffer.size(),
-                    _staging_header.sample_tick,
-                    hdr->unix_time);
-
-                _last_unix_time = hdr->unix_time;
-                _last_ms_count = _ms_count;
-                _last_ms_frac = _ms_frac;
-
-                _staging_buffer.clear();
-                _staging_count = 0;
-            } */
             // Push to queue once a full millisecond is staged
             if (_staging_count >= _packets_per_ms)
             {
@@ -327,9 +309,9 @@ bool ElasticReceiver::validate_ring_continuity(size_t lookback)
                 _ring_capacity];
 
         uint32_t expected =
-            prev.sample_tick + 1;
+            prev.sample_index + 1;
 
-        if (curr.sample_tick != expected)
+        if (curr.sample_index != expected)
         {
             fprintf(stdout,
                 "[RING BREAK] "
@@ -338,7 +320,7 @@ bool ElasticReceiver::validate_ring_continuity(size_t lookback)
                 "got=%u\n",
                 i,
                 expected,
-                curr.sample_tick);
+                curr.sample_index);
 
             return false;
         }
