@@ -96,14 +96,14 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
 
     /* Debug*/
     printf(
-    "[CHAN INIT] PRN %d acqCode=%.4f initCode=%.4f ncoCode=%.4f rot=%u fine=%u delay=%d\n",
-    _prn,
-    init.codePhase,
-    _initialCodePhase,
-    _codeNco.getCodePhase(),
-    _codeNco.getRotations(),
-    _codeNco.getFinePhase16(),
-    chipTravelDelay);
+        "[CHAN INIT] PRN %d acqCode=%.4f initCode=%.4f ncoCode=%.4f rot=%u fine=%u delay=%d\n",
+        _prn,
+        init.codePhase,
+        _initialCodePhase,
+        _codeNco.getCodePhase(),
+        _codeNco.getRotations(),
+        _codeNco.getFinePhase16(),
+        chipTravelDelay);
     /* End Debug*/
 
     _carrNco.SetFrequency(_carrFreqBasis - (float)_doppler_hz);
@@ -133,7 +133,8 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
 CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t availableSamples)
 {
     CorrelatorResult res = {};
-    res.epoch_valid = true;
+    res.epoch_valid = false;
+    bool saw_rollover = false;
     res.consumed_sample_count = availableSamples;
     res.epoch_offset_samples = -1; // Default to no-rollover
 
@@ -143,6 +144,8 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
         res.consumed_sample_count = 0;
         return res;
     }
+
+    float boundary_code_phase = _codeNco.getCodePhase();
 
     // 1. Rigid Hardware Mixing Loop
     for (size_t i = 0; i < availableSamples; ++i)
@@ -159,15 +162,22 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
         uint16_t curr_rot = _codeNco.getRotations();
         float curr_code_phase = _codeNco.getCodePhase();
 
+        static int rolloverPrintCount = 0;
         if (curr_rot < prev_rotations)
         {
-            printf( "[ROLLOVER] PRN %d offset=%zu prev=%.4f curr=%.4f\n",
-                _prn, i, prev_code_phase, curr_code_phase);
+            if (rolloverPrintCount++ % 100 == 0) // Throttle rollover prints to every 100 occurrences
+                printf("[ROLLOVER] PRN %d offset=%zu prev=%.4f curr=%.4f\n",
+                       _prn, i, prev_code_phase, curr_code_phase);
         }
 
         if (_codeNco.getRotations() < prev_rotations)
         {
+            saw_rollover = true;
+            res.epoch_valid = true;
             res.epoch_offset_samples = (int)i;
+            res.epoch_sample_tick = samples[i].sample_tick;
+            res.epoch_sample_index = samples[i].sample_index;
+            res.unix_time = samples[i].unix_time;
         }
 
         int16_t bb_i = (int16_t)(samples[i].i * _carrNco.cosine(carrIdx) * 127);
@@ -182,9 +192,6 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
     }
 
     // Telemetry tracking
-    res.epoch_sample_tick = samples[availableSamples - 1].sample_tick;
-    res.epoch_sample_index = samples[availableSamples - 1].sample_index;
-    res.unix_time = samples[availableSamples - 1].unix_time;
 
     // 2. Loop Filters & Discriminators (Using actual availableSamples time)
     float norm = 1.0f / (float)availableSamples;
@@ -235,6 +242,7 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
     _carrNco.SetFrequency(_currentCommandedFreq);
     _codeNco.SetFrequency(_codeFreqBasis + codeNcoUpdate + ((float)_doppler_hz / 1540.0f));
 
+    res.code_phase = boundary_code_phase;
     res.carrier_phase_error = carrError;
     res.absolute_carrier_phase = (((double)_carrNco.getPhase() / 4294967296.0) * (2.0 * M_PI));
     res.doppler_hz = (float)_doppler_hz;

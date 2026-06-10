@@ -14,29 +14,8 @@
 #include "AcquisitionMgr.hpp"
 #include "ChannelProcessor.h"
 #include "PCSEngine.hpp"
+#include "TrackingEngine.h"
 #include "NavDecoder.h"
-
-struct ChannelState
-{
-    int prn;
-    AcqResult result;
-    G2INIT sv;
-    std::unique_ptr<ChannelProcessor> processor;
-    std::unique_ptr<NavDecoder> decoder;
-    uint64_t last_logged_sample_index = 0;
-    uint64_t sampleCursor = 0; // Absolute sample index for tracking where we are in the stream
-    uint64_t total_tracked_ms = 0;
-    uint32_t handover_sample_tick = 0;
-    uint32_t handover_unix_time = 0;
-
-    bool isActive() const { return processor != nullptr; }
-
-    ChannelState(int p, double fs, const AcqResult &res, G2INIT s) : prn(p), result(res), sv(s)
-    {
-        processor = std::make_unique<ChannelProcessor>(fs, result, s);
-        decoder = std::make_unique<NavDecoder>(p);
-    }
-};
 
 int main(int argc, char *argv[])
 {
@@ -50,15 +29,15 @@ int main(int argc, char *argv[])
     versionInfo v;
     v.printVersion();
     RFE_Header_t meta = {};
-    TimeTrio t3;
+//    TimeTrio t3;
     static int dbg_counter = 0;
-    const uint64_t max_logged_ms = 250;
-    uint64_t logged_ms = 0;
-    bool file_logging_enabled = true;
-    std::list<ChannelState> activeChannels;
-    ChannelState rxState(0, 16368000.0, AcqResult(), G2INIT());
+//    const uint64_t max_logged_ms = 250;
+//    uint64_t logged_ms = 0;
+//    bool file_logging_enabled = true;
+    TrackingEngine tracking;
+//    ChannelState rxState(0, 16368000.0, AcqResult(), G2INIT());
 
-    auto system_start = std::chrono::steady_clock::now();
+//    auto system_start = std::chrono::steady_clock::now();
     uint32_t focusPRN = 131;
     if (argc > 1 && argv[1] != nullptr)
     {
@@ -86,8 +65,8 @@ int main(int argc, char *argv[])
         PCSEngine pcs((float)meta.fs_rate);
         AcquisitionMgr acqMgr(pcs);
         bool acq_needed = true;
-        auto start_wall = std::chrono::steady_clock::now();
-        const int tracking_ms = 1;
+//        auto start_wall = std::chrono::steady_clock::now();
+//        const int tracking_ms = 1;
         const int acq_ms = 5;
         const size_t ms_samples = (size_t)(meta.fs_rate / 1000.0);
         const size_t acq_samples = ms_samples * acq_ms;
@@ -159,7 +138,8 @@ int main(int argc, char *argv[])
 
                 if (!results.empty())
                 {
-                    activeChannels.clear();
+                    //activeChannels.clear();
+                    tracking.activeChannels.clear();
 
                     const AcqResult *focusTarget = nullptr;
 
@@ -180,15 +160,15 @@ int main(int argc, char *argv[])
 
                     if (focusTarget != nullptr)
                     {
-                        activeChannels.emplace_back(
+                        tracking.activeChannels.emplace_back(
                             focusTarget->prn,
                             (double)meta.fs_rate,
                             *focusTarget,
                             pcs.getSV(focusTarget->prn));
 
-                        activeChannels.back().decoder->setFocus(true);
+                        tracking.activeChannels.back().decoder->setFocus(true);
 
-                        auto &state = activeChannels.front();
+                        auto &state = tracking.activeChannels.front();
 
                         state.total_tracked_ms = 0;
                         state.handover_sample_tick = (uint32_t)std::round(focusTarget->codePhase);
@@ -214,180 +194,8 @@ int main(int argc, char *argv[])
                 continue;
             }
             /* Tracking goes here */
-            if (!activeChannels.empty())
-            {
-                for (auto &state : activeChannels)
-                {
-                    if (state.prn != (int)focusPRN)
-                        continue;
+            tracking.step(rx, meta, focusPRN, out, acq_needed);
 
-                    uint64_t write = rx.get_write_index();
-                    uint64_t ring_capacity = ms_samples * 250;
-
-                    if (state.sampleCursor + ms_samples < write - ring_capacity)
-                    {
-                        printf(
-                            "[TRK STALE] PRN %d cursor=%llu write=%llu capacity=%llu -- reacquire\n",
-                            state.prn,
-                            state.sampleCursor,
-                            write,
-                            ring_capacity);
-
-                        acq_needed = true;
-                        activeChannels.clear();
-                        break;
-                    }
-
-                    while (rx.get_write_index() >= state.sampleCursor + ms_samples)
-                    {
-                        RawSample *ms_ptr = nullptr;
-                        std::vector<RawSample> ms_window;
-
-                        if (!rx.get_window(
-                                state.sampleCursor,
-                                ms_ptr,
-                                (unsigned int)ms_samples,
-                                ms_window))
-                        {
-                            break;
-                        }
-
-                        uint64_t current_cursor = state.sampleCursor;
-                        uint64_t this_index = ms_ptr[0].sample_index;
-
-                        if (this_index != current_cursor)
-                        {
-                            printf(
-                                "[CURSOR MISMATCH] cursor=%llu sample_index=%llu\n",
-                                current_cursor,
-                                this_index);
-                        }
-
-                        if (state.last_logged_sample_index != 0)
-                        {
-                            uint64_t expected = state.last_logged_sample_index + ms_samples;
-
-                            if (this_index != expected)
-                            {
-                                printf(
-                                    "[TRACK GAP] expected=%llu got=%llu delta=%lld ms_delta=%.3f\n",
-                                    expected,
-                                    this_index,
-                                    (long long)(this_index - expected),
-                                    (double)(this_index - expected) / (double)ms_samples);
-                            }
-                        }
-
-                        state.last_logged_sample_index = this_index;
-
-                        CorrelatorResult res =
-                            state.processor->Correlator(
-                                ms_ptr,
-                                (unsigned int)ms_samples);
-
-                        state.sampleCursor += ms_samples;
-                        state.total_tracked_ms++;
-
-                        // ---- Existing code phase update ----
-
-                        double activeCodeFreq =
-                            1023000.0 +
-                            (double)res.doppler_hz / 1540.0;
-
-                        if (res.epoch_offset_samples != -1)
-                        {
-                            double dynamic_samples_per_chip =
-                                (double)(ms_samples * 1000.0) /
-                                activeCodeFreq;
-
-                            double chips_to_end =
-                                (double)res.epoch_offset_samples /
-                                dynamic_samples_per_chip;
-
-                            state.result.codePhase =
-                                std::fmod(
-                                    1023.0 - chips_to_end,
-                                    1023.0);
-                        }
-                        else
-                        {
-                            double chips_advanced =
-                                (double)ms_samples *
-                                activeCodeFreq /
-                                (double)(meta.fs_rate);
-
-                            state.result.codePhase =
-                                std::fmod(
-                                    state.result.codePhase +
-                                        chips_advanced,
-                                    1023.0);
-                        }
-
-                        res.code_phase =
-                            state.result.codePhase;
-
-                        // ---- Timing comes directly from ring ----
-
-                        if (res.epoch_valid)
-                        {
-                            const RawSample &sample = ms_ptr[0];
-
-                            uint64_t stable_fs_rate = (uint64_t)meta.fs_rate;
-                            uint64_t sub_second_ticks = sample.sample_tick % stable_fs_rate;
-                            uint32_t calculated_ms =
-                                (uint32_t)((sub_second_ticks * 1000) / stable_fs_rate);
-
-                            t3.unixSecond = sample.unix_time;
-                            t3.msCount = calculated_ms;
-
-                            // 1 symbol per 1 ms integration
-                            const char symbol = (res.Pi > 0) ? '#' : '-';
-
-                            if (file_logging_enabled && logged_ms < max_logged_ms)
-                            {
-                                fprintf(
-                                    out,
-                                    "%s ",
-                                    get_iso8601_timestamp(t3.unixSecond, t3.msCount).c_str());
-
-                                printCorrelatorData(out, res);
-
-                                fprintf(
-                                    out,
-                                    " tick=%u ms=%u idx=%llu ",
-                                    sample.sample_tick,
-                                    calculated_ms,
-                                    sample.sample_index);
-                                fprintf(out, " idx=%llu ", sample.sample_index);
-                                fprintf(out, " | Bits: %c\n", symbol);
-
-                                logged_ms++;
-
-                                if (logged_ms == max_logged_ms)
-                                {
-                                    fflush(out);
-                                    file_logging_enabled = false;
-                                    printf("[LOG] Stopped file logging after %llu ms\n", logged_ms);
-                                }
-                            }
-
-                            // Lightweight console sanity check
-                            if (state.total_tracked_ms % 100 == 0)
-                            {
-                                printf(
-                                    "[TRK] PRN %3d SNR:%5.1f dF:%8.1f Code:%7.2f Pi:% 7d Pq:% 7d Bit:%c\n",
-                                    state.prn,
-                                    res.snr,
-                                    res.doppler_hz,
-                                    res.code_phase,
-                                    res.Pi,
-                                    res.Pq,
-                                    symbol);
-                            }
-                        }
-                    }
-                }
-            }
             std::this_thread::sleep_for(std::chrono::microseconds(250));
         } // End of while(true)
     } // End try
