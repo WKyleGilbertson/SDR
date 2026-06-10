@@ -9,6 +9,16 @@
 #include "L1IFUtil.hpp"  // Has the bit unpacking
 #include "PCSEngine.hpp" // This defines AcqResult
 
+struct EpochResult{
+    int32_t Pi;
+    int32_t Pq;
+    uint32_t sample_count;
+    uint64_t sample_index;
+    uint32_t sample_tick;
+    uint32_t unix_time;
+    int offset_samples;
+    int8_t symbol;
+};
 struct CorrelatorResult
 {
     int prn = 0;
@@ -29,6 +39,7 @@ struct CorrelatorResult
     int numSymbols = 0;
     size_t consumed_sample_count = 0; // Number of samples consumed from the input buffer for this epoch's processing
     int epoch_offset_samples = -1;
+    std::vector<EpochResult> epochs;
 };
 struct LoopFilter
 {
@@ -76,6 +87,8 @@ private:
     float _oldCarrError = 0.0f, _oldCarrNco = 0.0f;
     float _currentCommandedFreq = 0.0f;
     Accumulators _acc;
+    Accumulators _epochAcc;
+    uint32_t _epochSampleCount = 0;
     uint64_t _sampleCounter = 0;
     void resetAccumulators(Accumulators &acc);
     void ChannelProcessor::calculateSNR(Accumulators &acc, float &snr);

@@ -127,35 +127,25 @@ bool TrackingEngine::step(
 
       state.total_tracked_ms++;
 
-      if (res.epoch_valid)
+      for (size_t idx = 0; idx < res.epochs.size(); ++idx)
       {
-        const RawSample &sample = ms_ptr[0];
+        const auto &epoch = res.epochs[idx];
 
-        uint64_t stable_fs_rate = (uint64_t)meta.fs_rate;
-        uint64_t sub_second_ticks = sample.sample_tick % stable_fs_rate;
-        uint32_t calculated_ms =
-            (uint32_t)((sub_second_ticks * 1000) / stable_fs_rate);
-
-        uint32_t unixSecond = sample.unix_time;
-        uint32_t msCount = calculated_ms;
-
-        // 1 symbol per 1 ms integration
-        const char symbol = (res.Pi > 0) ? '#' : '-';
-        int8_t sym = (res.Pi >= 0) ? 1 : -1;
+        int8_t sym = epoch.symbol;
+        char symbol = (sym > 0) ? '#' : '-';
 
         state.epochSymbols.push_back(sym);
         state.nav20_sum += sym;
         state.nav20_count++;
 
-        //        if (state.nav20_count == 20)
-        //        {
-        //         int8_t nav_bit = (state.nav20_sum >= 0) ? 1 : -1;
-        //
-        //          printf("[NAV BIT] PRN %d bit=%d sum=%d\n", state.prn, nav_bit, state.nav20_sum);
-        //
-        //          state.nav20_sum = 0;
-        //          state.nav20_count = 0;
-        //        }
+        uint64_t stable_fs_rate = (uint64_t)meta.fs_rate;
+        uint64_t sub_second_ticks = epoch.sample_tick % stable_fs_rate;
+        uint32_t calculated_ms =
+            (uint32_t)((sub_second_ticks * 1000) / stable_fs_rate);
+
+        uint32_t unixSecond = epoch.unix_time;
+        uint32_t msCount = calculated_ms;
+
         if (file_logging_enabled && logged_ms < max_logged_ms)
         {
           fprintf(
@@ -167,12 +157,15 @@ bool TrackingEngine::step(
 
           fprintf(
               out,
-              " tick=%u ms=%u idx=%llu ",
-              sample.sample_tick,
+              " epoch_tick=%u ms=%u epoch_idx=%llu off=%d epochN=%u epochPi=%d epochPq=%d | Bits: %c\n",
+              epoch.sample_tick,
               calculated_ms,
-              sample.sample_index);
-          fprintf(out, " idx=%llu ", sample.sample_index);
-          fprintf(out, " | Bits: %c\n", symbol);
+              epoch.sample_index,
+              epoch.offset_samples,
+              epoch.sample_count,
+              epoch.Pi,
+              epoch.Pq,
+              symbol);
 
           logged_ms++;
 
@@ -184,28 +177,35 @@ bool TrackingEngine::step(
           }
         }
 
-        // Lightweight console sanity check
         if (state.total_tracked_ms % 100 == 0)
         {
           printf(
-              "[TRK] PRN %3d SNR:%5.1f dF:%8.1f Code:%7.2f off:%5d used:%5zu Pi:% 7d Pq:% 7d Bit:%c\n",
+              "epoch[%zu] sym=%d Pi=%d Pq=%d N=%u off=%d\n",
+              idx,
+              epoch.symbol,
+              epoch.Pi,
+              epoch.Pq,
+              epoch.sample_count,
+              epoch.offset_samples);
+
+          printf(
+              "[TRK] PRN %3d SNR:%5.1f dF:%8.1f Code:%7.2f used:%5zu blockPi:% 7d blockPq:% 7d Bit:%c\n",
               state.prn,
               res.snr,
               res.doppler_hz,
               res.code_phase,
-              res.epoch_offset_samples,
               res.consumed_sample_count,
               res.Pi,
               res.Pq,
               symbol);
-          /*
-          printf(
-              "[TRK] PRN %3d SNR:%5.1f dF:%8.1f Code:%7.2f Pi:% 7d Pq:% 7d Bit:%c\n",
-              state.prn, res.snr, res.doppler_hz, res.code_phase, res.Pi, res.Pq,
-              symbol);*/
+
           printf(
               "[LAG] PRN %d lag=%.1f ms cursor=%llu oldest=%llu write=%llu\n",
-              state.prn, lag_ms, state.sampleCursor, oldest_available, write);
+              state.prn,
+              lag_ms,
+              state.sampleCursor,
+              oldest_available,
+              write);
         }
       }
     }

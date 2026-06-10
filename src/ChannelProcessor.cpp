@@ -59,6 +59,8 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     _carrFreqBasis = 4.092e6f;
     _codeFreqBasis = 1.023e6f;
     resetAccumulators(_acc);
+    resetAccumulators(_epochAcc);
+    _epochSampleCount = 0;
     _snr = -999.0f;
     _isLocked = false;
     _samplesPerMs = (size_t)(_fs / 1000.0);
@@ -180,6 +182,14 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
         _acc.Li += (bb_i * _codeNco.Late);
         _acc.Lq -= (bb_q * _codeNco.Late);
 
+        _epochAcc.Ei += (bb_i * _codeNco.Early);
+        _epochAcc.Eq -= (bb_q * _codeNco.Early);
+        _epochAcc.Pi += (bb_i * _codeNco.Prompt);
+        _epochAcc.Pq -= (bb_q * _codeNco.Prompt);
+        _epochAcc.Li += (bb_i * _codeNco.Late);
+        _epochAcc.Lq -= (bb_q * _codeNco.Late);
+        _epochSampleCount++;
+
         if (_codeNco.getRotations() < prev_rotations)
         {
             saw_rollover = true;
@@ -188,6 +198,20 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
             res.epoch_sample_tick = samples[i].sample_tick;
             res.epoch_sample_index = samples[i].sample_index;
             res.unix_time = samples[i].unix_time;
+
+            EpochResult epoch = {};
+            epoch.Pi = _epochAcc.Pi;
+            epoch.Pq = _epochAcc.Pq;
+            epoch.sample_count = _epochSampleCount;
+            epoch.sample_index = samples[i].sample_index;
+            epoch.sample_tick = samples[i].sample_tick;
+            epoch.unix_time = samples[i].unix_time;
+            epoch.offset_samples = (int)i;
+            epoch.symbol = (_epochAcc.Pi >= 0) ? 1 : -1;
+            res.epochs.push_back(epoch);
+
+            resetAccumulators(_epochAcc);
+            _epochSampleCount = 0;
         }
     }
 
