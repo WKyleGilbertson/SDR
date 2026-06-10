@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstddef>
 #include <vector>
+#include <cstdlib>
 #include <cstdio>
 #include <deque>
 #include "NCO.h"

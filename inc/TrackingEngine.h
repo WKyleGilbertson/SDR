@@ -25,6 +25,12 @@ struct ChannelState
     std::deque<int8_t> epochSymbols;
     int nav20_sum = 0;
     int nav20_count = 0;
+    uint64_t nav20_groups = 0;
+    uint64_t epoch_counter = 0;
+    int nav_phase_sum[20] = {};
+    int nav_phase_count[20] = {};
+    int nav_phase_score[20] = {};
+    int nav_phase_windows[20] = {};
 
     uint64_t last_logged_sample_index = 0;
     uint64_t sampleCursor = 0;
@@ -33,7 +39,7 @@ struct ChannelState
     uint32_t handover_sample_tick = 0;
     uint32_t handover_unix_time = 0;
 
-    ChannelState(int p, double fs, const AcqResult& res, G2INIT s);
+    ChannelState(int p, double fs, const AcqResult &res, G2INIT s);
 };
 
 class TrackingEngine
@@ -41,12 +47,12 @@ class TrackingEngine
 public:
     std::list<ChannelState> activeChannels;
 
-bool step(
-    ElasticReceiver& rx,
-    const RFE_Header_t& meta,
-    uint32_t focusPRN,
-    FILE* out,
-    bool& acq_needed);
+    bool step(
+        ElasticReceiver &rx,
+        const RFE_Header_t &meta,
+        uint32_t focusPRN,
+        FILE *out,
+        bool &acq_needed);
 
 private:
     bool file_logging_enabled = true;

@@ -1,3 +1,4 @@
+//#define DEBUG_ROLLOVER
 #include "ChannelProcessor.h"
 #include <cmath>
 
@@ -164,13 +165,15 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
         uint16_t curr_rot = _codeNco.getRotations();
         float curr_code_phase = _codeNco.getCodePhase();
 
+        #ifdef DEBUG_ROLLOVER
         static int rolloverPrintCount = 0;
         if (curr_rot < prev_rotations)
         {
             if (rolloverPrintCount++ % 100 == 0) // Throttle rollover prints to every 100 occurrences
                 printf("[ROLLOVER] PRN %d offset=%zu prev=%.4f curr=%.4f\n",
                        _prn, i, prev_code_phase, curr_code_phase);
-        }
+        } 
+        #endif
 
         int16_t bb_i = (int16_t)(samples[i].i * _carrNco.cosine(carrIdx) * 127);
         int16_t bb_q = (int16_t)(samples[i].q * _carrNco.sine(carrIdx) * 127);
