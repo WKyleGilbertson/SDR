@@ -170,16 +170,6 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
                        _prn, i, prev_code_phase, curr_code_phase);
         }
 
-        if (_codeNco.getRotations() < prev_rotations)
-        {
-            saw_rollover = true;
-            res.epoch_valid = true;
-            res.epoch_offset_samples = (int)i;
-            res.epoch_sample_tick = samples[i].sample_tick;
-            res.epoch_sample_index = samples[i].sample_index;
-            res.unix_time = samples[i].unix_time;
-        }
-
         int16_t bb_i = (int16_t)(samples[i].i * _carrNco.cosine(carrIdx) * 127);
         int16_t bb_q = (int16_t)(samples[i].q * _carrNco.sine(carrIdx) * 127);
 
@@ -189,9 +179,17 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
         _acc.Pq -= (bb_q * _codeNco.Prompt);
         _acc.Li += (bb_i * _codeNco.Late);
         _acc.Lq -= (bb_q * _codeNco.Late);
-    }
 
-    // Telemetry tracking
+        if (_codeNco.getRotations() < prev_rotations)
+        {
+            saw_rollover = true;
+            res.epoch_valid = true;
+            res.epoch_offset_samples = (int)i;
+            res.epoch_sample_tick = samples[i].sample_tick;
+            res.epoch_sample_index = samples[i].sample_index;
+            res.unix_time = samples[i].unix_time;
+        }
+    }
 
     // 2. Loop Filters & Discriminators (Using actual availableSamples time)
     float norm = 1.0f / (float)availableSamples;

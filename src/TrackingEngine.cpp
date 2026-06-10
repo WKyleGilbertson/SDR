@@ -15,6 +15,7 @@ bool TrackingEngine::step(
     bool &acq_needed)
 {
   const size_t ms_samples = (size_t)(meta.fs_rate / 1000.0);
+  const int feed_samples = (unsigned int)ms_samples; // Process 1 ms of data at a time
   bool did_work = false;
 
   for (auto &state : activeChannels)
@@ -22,32 +23,65 @@ bool TrackingEngine::step(
     if (state.prn != (int)focusPRN)
       continue;
 
-    uint64_t write = rx.get_write_index();
-    uint64_t ring_capacity = ms_samples * 250;
-
-    if (state.sampleCursor + ms_samples < write - ring_capacity)
+    while (true)
     {
-      printf(
-          "[TRK STALE] PRN %d cursor=%llu write=%llu capacity=%llu -- reacquire\n",
-          state.prn,
-          state.sampleCursor,
-          write,
-          ring_capacity);
+      uint64_t write = rx.get_write_index();
+      uint64_t ring_capacity = ms_samples * 250;
 
-      acq_needed = true;
-      activeChannels.clear();
-      break;
-    }
+      uint64_t oldest_available =
+          (write > ring_capacity)
+              ? (write - ring_capacity)
+              : 0;
 
-    while (rx.get_write_index() >= state.sampleCursor + ms_samples)
-    {
+      int64_t lag_samples =
+          (int64_t)write - (int64_t)state.sampleCursor;
+
+      int64_t margin_samples =
+          (int64_t)state.sampleCursor - (int64_t)oldest_available;
+
+      double lag_ms =
+          (double)lag_samples / (double)ms_samples;
+
+      double margin_ms =
+          (double)margin_samples / (double)ms_samples;
+
+      if (state.sampleCursor < oldest_available)
+      {
+        uint64_t aligned_write =
+            write - (write % ms_samples);
+
+        uint64_t new_cursor =
+            aligned_write - ms_samples;
+
+        printf(
+            "[TRK JUMP] PRN %d lag=%.1f margin=%.1f cursor=%llu oldest=%llu write=%llu -> %llu\n",
+            state.prn,
+            lag_ms,
+            margin_ms,
+            state.sampleCursor,
+            oldest_available,
+            write,
+            new_cursor);
+
+        state.sampleCursor = new_cursor;
+        state.last_logged_sample_index = 0;
+        state.nav20_sum = 0;
+        state.nav20_count = 0;
+        state.epochSymbols.clear();
+
+        continue;
+      }
+
+      if (write < state.sampleCursor + feed_samples)
+        break;
+
       RawSample *ms_ptr = nullptr;
       std::vector<RawSample> ms_window;
 
       if (!rx.get_window(
               state.sampleCursor,
               ms_ptr,
-              (unsigned int)ms_samples,
+              feed_samples,
               ms_window))
       {
         break;
@@ -66,65 +100,32 @@ bool TrackingEngine::step(
 
       if (state.last_logged_sample_index != 0)
       {
-        uint64_t expected = state.last_logged_sample_index + ms_samples;
-
-        if (this_index != expected)
+        uint64_t expected = state.last_logged_sample_index + feed_samples;
+        if (this_index != current_cursor)
         {
-          printf(
-              "[TRACK GAP] expected=%llu got=%llu delta=%lld ms_delta=%.3f\n",
-              expected,
-              this_index,
-              (long long)(this_index - expected),
-              (double)(this_index - expected) / (double)ms_samples);
+          int64_t delta = (int64_t)this_index - (int64_t)expected;
+          printf("[CURSOR MISMATCH] cursor=%llu sample_index=%llu delta=%lld\n",
+                 current_cursor, this_index, delta);
         }
       }
 
       state.last_logged_sample_index = this_index;
 
-      CorrelatorResult res =
-          state.processor->Correlator(
-              ms_ptr,
-              (unsigned int)ms_samples);
+      CorrelatorResult res = state.processor->Correlator(ms_ptr, feed_samples);
 
-      state.sampleCursor += ms_samples;
+      did_work = true;
+
+      if (res.consumed_sample_count != feed_samples)
+      {
+        printf(
+            "[TRK NOTE] correlator reported consumed=%zu, forcing feed=%d\n",
+            res.consumed_sample_count,
+            feed_samples);
+      }
+
+      state.sampleCursor += feed_samples;
+
       state.total_tracked_ms++;
-
-      // ---- Existing code phase update ----
-
-      double activeCodeFreq =
-          1023000.0 +
-          (double)res.doppler_hz / 1540.0;
-
-      if (res.epoch_offset_samples != -1)
-      {
-        double dynamic_samples_per_chip =
-            (double)(ms_samples * 1000.0) /
-            activeCodeFreq;
-
-        double chips_to_end =
-            (double)res.epoch_offset_samples /
-            dynamic_samples_per_chip;
-
-        state.result.codePhase =
-            std::fmod(
-                1023.0 - chips_to_end,
-                1023.0);
-      }
-      else
-      {
-        double chips_advanced =
-            (double)ms_samples *
-            activeCodeFreq /
-            (double)(meta.fs_rate);
-
-        state.result.codePhase =
-            std::fmod(
-                state.result.codePhase +
-                    chips_advanced,
-                1023.0);
-      }
-
-      // ---- Timing comes directly from ring ----
 
       if (res.epoch_valid)
       {
@@ -146,19 +147,15 @@ bool TrackingEngine::step(
         state.nav20_sum += sym;
         state.nav20_count++;
 
-        /*
-        if (state.nav20_count == 20)
-        {
-          int8_t nav_bit = (state.nav20_sum >= 0) ? 1 : -1;
-
-          printf("[NAV BIT] PRN %d bit=%d sum=%d\n",
-                 state.prn,
-                 nav_bit,
-                 state.nav20_sum);
-
-          state.nav20_sum = 0;
-          state.nav20_count = 0;
-        } */
+        //        if (state.nav20_count == 20)
+        //        {
+        //         int8_t nav_bit = (state.nav20_sum >= 0) ? 1 : -1;
+        //
+        //          printf("[NAV BIT] PRN %d bit=%d sum=%d\n", state.prn, nav_bit, state.nav20_sum);
+        //
+        //          state.nav20_sum = 0;
+        //          state.nav20_count = 0;
+        //        }
         if (file_logging_enabled && logged_ms < max_logged_ms)
         {
           fprintf(
@@ -191,17 +188,27 @@ bool TrackingEngine::step(
         if (state.total_tracked_ms % 100 == 0)
         {
           printf(
-              "[TRK] PRN %3d SNR:%5.1f dF:%8.1f Code:%7.2f Pi:% 7d Pq:% 7d Bit:%c\n",
+              "[TRK] PRN %3d SNR:%5.1f dF:%8.1f Code:%7.2f off:%5d used:%5zu Pi:% 7d Pq:% 7d Bit:%c\n",
               state.prn,
               res.snr,
               res.doppler_hz,
               res.code_phase,
+              res.epoch_offset_samples,
+              res.consumed_sample_count,
               res.Pi,
               res.Pq,
               symbol);
+          /*
+          printf(
+              "[TRK] PRN %3d SNR:%5.1f dF:%8.1f Code:%7.2f Pi:% 7d Pq:% 7d Bit:%c\n",
+              state.prn, res.snr, res.doppler_hz, res.code_phase, res.Pi, res.Pq,
+              symbol);*/
+          printf(
+              "[LAG] PRN %d lag=%.1f ms cursor=%llu oldest=%llu write=%llu\n",
+              state.prn, lag_ms, state.sampleCursor, oldest_available, write);
         }
       }
     }
   }
   return did_work;
-};
+}

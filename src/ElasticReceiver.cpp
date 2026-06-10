@@ -6,10 +6,10 @@ ElasticReceiver::ElasticReceiver(size_t max_blocks)
 {
     _staging_buffer.reserve(_samples_per_ms / 2);
     _ring_capacity =
-    _samples_per_ms * 250;
+        _samples_per_ms * 250;
 
-_sample_ring.resize(
-    _ring_capacity);
+    _sample_ring.resize(
+        _ring_capacity);
 }
 
 ElasticReceiver::~ElasticReceiver()
@@ -83,7 +83,8 @@ void ElasticReceiver::ingest_thread()
         RFE_Header_t *hdr = (RFE_Header_t *)packet_raw.data();
         uint8_t *payload = packet_raw.data() + H_SIZE;
         size_t payload_len = len - H_SIZE;
-        if (_last_seq_num == 0) _last_seq_num = hdr->seq_num;
+        if (_last_seq_num == 0)
+            _last_seq_num = hdr->seq_num;
 
         // Dynamic Sample Rate Detection
         if (hdr->fs_rate != current_fs_rate)
@@ -136,10 +137,10 @@ void ElasticReceiver::ingest_thread()
                     _staging_buffer.size(),
                     _staging_header.sample_tick,
                     hdr->unix_time);
-/*fprintf(stdout,
-    "[DBG] staged=%zu expected=%u\n",
-    _staging_buffer.size(),
-    _samples_per_ms / 2); */
+                /*fprintf(stdout,
+                    "[DBG] staged=%zu expected=%u\n",
+                    _staging_buffer.size(),
+                    _samples_per_ms / 2); */
                 if (_ready_queue.size() > _max_queue_size)
                 {
                     _ready_queue.pop_front();
@@ -147,8 +148,8 @@ void ElasticReceiver::ingest_thread()
 
                 _staging_buffer.clear();
                 _staging_count = 0;
-            //printf("Ring write: %llu\n", _write_index);
-            } 
+                // printf("Ring write: %llu\n", _write_index);
+            }
         }
     } // End of while (_is_running)
 }
@@ -218,12 +219,12 @@ TimeTrio ElasticReceiver::get_time_trio()
 }
 
 void ElasticReceiver::unpack_to_ring(
-    const uint8_t* packed,
+    const uint8_t *packed,
     size_t packed_count,
     uint32_t sample_tick,
     uint32_t unix_time)
 {
-    const UnpackEntry* lut =
+    const UnpackEntry *lut =
         GetLUT_FNHN();
 
     std::lock_guard<std::mutex>
@@ -236,7 +237,7 @@ void ElasticReceiver::unpack_to_ring(
          i < packed_count;
          ++i)
     {
-        const auto& e =
+        const auto &e =
             lut[packed[i]];
 
         size_t idx =
@@ -298,15 +299,13 @@ bool ElasticReceiver::validate_ring_continuity(size_t lookback)
          i < _write_index;
          ++i)
     {
-        const RawSample& prev =
-            _sample_ring[
-                (i - 1) %
-                _ring_capacity];
+        const RawSample &prev =
+            _sample_ring[(i - 1) %
+                         _ring_capacity];
 
-        const RawSample& curr =
-            _sample_ring[
-                i %
-                _ring_capacity];
+        const RawSample &curr =
+            _sample_ring[i %
+                         _ring_capacity];
 
         uint32_t expected =
             prev.sample_index + 1;
@@ -314,13 +313,13 @@ bool ElasticReceiver::validate_ring_continuity(size_t lookback)
         if (curr.sample_index != expected)
         {
             fprintf(stdout,
-                "[RING BREAK] "
-                "idx=%llu "
-                "expected=%u "
-                "got=%u\n",
-                i,
-                expected,
-                curr.sample_index);
+                    "[RING BREAK] "
+                    "idx=%llu "
+                    "expected=%u "
+                    "got=%u\n",
+                    i,
+                    expected,
+                    curr.sample_index);
 
             return false;
         }
@@ -331,13 +330,20 @@ bool ElasticReceiver::validate_ring_continuity(size_t lookback)
 
 bool ElasticReceiver::get_window(
     uint64_t start_index,
-    RawSample*& out_ptr,
+    RawSample *&out_ptr,
     unsigned int count,
-    std::vector<RawSample>& scratch)
+    std::vector<RawSample> &scratch)
 {
     std::lock_guard<std::mutex> lock(_ring_mtx);
 
-    if (_write_index < start_index + count)
+    if (count == 0 || _ring_capacity == 0)
+        return false;
+
+    if (start_index + count > _write_index)
+        return false;
+
+    if (_write_index > _ring_capacity &&
+        start_index < (_write_index - _ring_capacity))
         return false;
 
     scratch.resize(count);
@@ -345,9 +351,7 @@ bool ElasticReceiver::get_window(
     for (unsigned int i = 0; i < count; ++i)
     {
         scratch[i] =
-            _sample_ring[
-                (start_index + i) %
-                _ring_capacity];
+            _sample_ring[(start_index + i) % _ring_capacity];
     }
 
     out_ptr = scratch.data();
