@@ -11,22 +11,24 @@
 
 struct CorrelatorResult
 {
-    int prn;
-    double Pi;
-    double Pq;
-    double carrier_phase_error;    // Relative error: atanf(Pq / Pi)
-    double absolute_carrier_phase; // Total continuous accumulated radians <--- ADD THIS
-    double code_phase;
-    double doppler_hz;
-    double snr;
-    uint64_t rollover_sample_idx;
-    uint32_t unix_time;
-    bool is_locked;
-    bool epoch_valid;
-    int8_t symbols[32];
-    int numSymbols;
-    size_t consumed_sample_count; // Number of samples consumed from the input buffer for this epoch's processing
-    int rollover_sample_index_in_block;
+    int prn = 0;
+    int32_t Pi = 0;
+    int32_t Pq = 0;
+    float carrier_phase_error = 0.0f;    // Relative error: atanf(Pq / Pi)
+    float absolute_carrier_phase = 0.0f; // Total continuous accumulated radians <--- ADD THIS
+    float code_phase = 0.0f;
+    float doppler_hz = 0.0f;
+    float snr = 0.0f;
+    uint64_t epoch_sample_index = 0;
+    uint32_t epoch_sample_tick = 0;
+    uint32_t unix_time = 0;
+    bool is_locked = false;
+    bool epoch_valid = false;
+    int8_t symbol = 0;
+    int8_t symbols[32] = {0};
+    int numSymbols = 0;
+    size_t consumed_sample_count = 0; // Number of samples consumed from the input buffer for this epoch's processing
+    int epoch_offset_samples = -1;
 };
 struct LoopFilter
 {
@@ -65,8 +67,8 @@ private:
     uint8_t _msIntegrated = 0;
     uint16_t _epochSampleCounter = 0;
     uint64_t _absoluteBaseRotations = 0;
-    double _sampleFractionAccumulator = 0.0;
-    double _continuousTrackedChips = 0.0;
+//    float _sampleFractionAccumulator = 0.0;
+    float _continuousTrackedChips = 0.0;
     // Loop Filter State from TrkBST.cpp
     float _carrFreqBasis;
     float _codeFreqBasis;
@@ -76,15 +78,15 @@ private:
     Accumulators _acc;
     uint64_t _sampleCounter = 0;
     void resetAccumulators(Accumulators &acc);
-    void ChannelProcessor::calculateSNR(Accumulators &acc, double &snr);
+    void ChannelProcessor::calculateSNR(Accumulators &acc, float &snr);
     // Filter Coefficients
     LoopFilter _codeLF, _carrLF;
-    double _fs;
+    float _fs;
     int _prn;
-    double _doppler_hz;
-    double _code_phase;
-    double _initialCodePhase;
-    double _snr;
+    float _doppler_hz;
+    float _code_phase;
+    float _initialCodePhase;
+    float _snr;
     bool _isLocked;
     uint32_t _prevCodePhase = 0;
     std::vector<int8_t> _ca_replica;

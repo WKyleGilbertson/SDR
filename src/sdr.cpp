@@ -294,14 +294,14 @@ int main(int argc, char *argv[])
                             1023000.0 +
                             (double)res.doppler_hz / 1540.0;
 
-                        if (res.rollover_sample_index_in_block != -1)
+                        if (res.epoch_offset_samples != -1)
                         {
                             double dynamic_samples_per_chip =
                                 (double)(ms_samples * 1000.0) /
                                 activeCodeFreq;
 
                             double chips_to_end =
-                                (double)res.rollover_sample_index_in_block /
+                                (double)res.epoch_offset_samples /
                                 dynamic_samples_per_chip;
 
                             state.result.codePhase =
@@ -375,7 +375,7 @@ int main(int argc, char *argv[])
                             if (state.total_tracked_ms % 100 == 0)
                             {
                                 printf(
-                                    "[TRK] PRN %3d SNR:%5.1f dF:%8.1f Code:%7.2f Pi:% 7.0f Pq:% 7.0f Bit:%c\n",
+                                    "[TRK] PRN %3d SNR:%5.1f dF:%8.1f Code:%7.2f Pi:% 7d Pq:% 7d Bit:%c\n",
                                     state.prn,
                                     res.snr,
                                     res.doppler_hz,

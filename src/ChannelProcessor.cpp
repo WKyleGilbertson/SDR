@@ -15,7 +15,7 @@ void ChannelProcessor::resetAccumulators(Accumulators &acc)
     acc.SLq = 0;
 }
 
-void ChannelProcessor::calculateSNR(Accumulators &acc, double &snr)
+void ChannelProcessor::calculateSNR(Accumulators &acc, float &snr)
 {
     _snrBufferI[_snrBufferIndex] = (float)acc.Pi;
     _snrBufferQ[_snrBufferIndex] = (float)acc.Pq;
@@ -135,7 +135,7 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
     CorrelatorResult res = {};
     res.epoch_valid = true;
     res.consumed_sample_count = availableSamples;
-    res.rollover_sample_index_in_block = -1; // Default to no-rollover
+    res.epoch_offset_samples = -1; // Default to no-rollover
 
     if (availableSamples == 0 || samples == nullptr)
     {
@@ -148,19 +148,26 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
     for (size_t i = 0; i < availableSamples; ++i)
     {
         _sampleCounter++;
-
         uint32_t carrIdx = _carrNco.clk();
 
         // Track the rotations value BEFORE advancing the NCO
-        uint32_t prev_rotations = _codeNco.getRotations();
+        uint16_t prev_rotations = _codeNco.getRotations();
+        float prev_code_phase = _codeNco.getCodePhase();
+
         _codeNco.clk();
 
-        // NCO NATIVE ROLLOVER DETECTION:
-        // Because NCO.cpp wraps from 1022 back to 0, a rollover occurs when
-        // the current rotations count drops lower than the previous count.
+        uint16_t curr_rot = _codeNco.getRotations();
+        float curr_code_phase = _codeNco.getCodePhase();
+
+        if (curr_rot < prev_rotations)
+        {
+            printf( "[ROLLOVER] PRN %d offset=%zu prev=%.4f curr=%.4f\n",
+                _prn, i, prev_code_phase, curr_code_phase);
+        }
+
         if (_codeNco.getRotations() < prev_rotations)
         {
-            res.rollover_sample_index_in_block = (int)i;
+            res.epoch_offset_samples = (int)i;
         }
 
         int16_t bb_i = (int16_t)(samples[i].i * _carrNco.cosine(carrIdx) * 127);
@@ -175,7 +182,8 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
     }
 
     // Telemetry tracking
-    res.rollover_sample_idx = samples[availableSamples - 1].sample_tick;
+    res.epoch_sample_tick = samples[availableSamples - 1].sample_tick;
+    res.epoch_sample_index = samples[availableSamples - 1].sample_index;
     res.unix_time = samples[availableSamples - 1].unix_time;
 
     // 2. Loop Filters & Discriminators (Using actual availableSamples time)
@@ -209,10 +217,9 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
     calculateSNR(_acc, _snr);
     _isLocked = (_snr > 12.0f);
 
-    if (res.numSymbols < 32)
-    {
-        res.symbols[res.numSymbols++] = (I > 0.0f) ? 1 : -1;
-    }
+    res.symbol = (I > 0) ? 1 : -1;
+    res.numSymbols = 1;
+    res.symbols[0] = res.symbol;
 
     // 3. Update Frequencies
     float carrNcoUpdate = _oldCarrNco + (_carrLF.tau2 / _carrLF.tau1) * (carrError - _oldCarrError) + (carrError * (dynamicT / _carrLF.tau1));
@@ -232,8 +239,8 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
     res.absolute_carrier_phase = (((double)_carrNco.getPhase() / 4294967296.0) * (2.0 * M_PI));
     res.doppler_hz = (float)_doppler_hz;
     res.prn = _prn;
-    res.Pi = (double)_acc.Pi;
-    res.Pq = (double)_acc.Pq;
+    res.Pi = _acc.Pi;
+    res.Pq = _acc.Pq;
     res.snr = _snr;
     res.is_locked = _isLocked;
 
