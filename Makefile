@@ -22,7 +22,7 @@ CURRENT_DATE := '"$(shell date /t)"'
 sdr collector relay_server:
 sdr: MAJOR=0
 sdr: MINOR=1
-sdr: PATCH=3	
+sdr: PATCH=4	
 sdr: APP_NAME='"sdr"'
 
 collector: MAJOR=0
