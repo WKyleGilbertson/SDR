@@ -35,6 +35,9 @@ struct ChannelState
     int8_t nav_phase_prev_bit[20] = {};
     bool nav_phase_has_prev_bit[20] = {};
     uint32_t nav_phase_flip_count[20] = {};
+    int nav_phase_best = -1;
+    double nav_phase_ratio = 0.0;
+    int8_t last_nav_bit = 0;
 
     uint64_t last_logged_sample_index = 0;
     uint64_t sampleCursor = 0;

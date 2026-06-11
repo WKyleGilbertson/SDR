@@ -1,5 +1,6 @@
 #include "TrackingEngine.h"
-//#define TRK_LAG_DEBUG
+// #define TRK_LAG_DEBUG
+// #define DBG_NAV20
 
 ChannelState::ChannelState(int p, double fs, const AcqResult &res, G2INIT s)
     : prn(p), result(res), sv(s)
@@ -64,7 +65,7 @@ void TrackingEngine::processEpoch(
 
   state.epoch_counter++;
 
-  if ((state.epoch_counter % 1000) == 0)
+  if ((state.epoch_counter % 5000) == 0)
   {
     int best_phase = -1;
     int second_phase = -1;
@@ -72,7 +73,7 @@ void TrackingEngine::processEpoch(
     double best_avg = -1.0;
     double second_avg = -1.0;
 
-    printf("[NAVPHASE]");
+    printf("\n[NAVPHASE]");
 
     for (int p = 0; p < 20; ++p)
     {
@@ -105,8 +106,11 @@ void TrackingEngine::processEpoch(
             ? (best_avg / second_avg)
             : 0.0;
 
+    state.nav_phase_best = best_phase;
+    state.nav_phase_ratio = ratio;
+
     printf(
-        " best=%02d %.1fk second=%02d %.1fk ratio=%.3f\n",
+        "\n best=%02d %.1fk second=%02d %.1fk ratio=%.3f\n",
         best_phase,
         best_avg / 1000.0,
         second_phase,
@@ -126,13 +130,15 @@ void TrackingEngine::processEpoch(
 
     state.nav20_groups++;
 
+#ifdef DBG_NAV20
     if ((state.nav20_groups % 20) == 0)
     {
-      printf("[NAV20] PRN %d bit=%c sum=%d\n",
+      printf("\n[NAV20] PRN %d bit=%c sum=%d\n",
              state.prn,
              nav_bit > 0 ? '#' : '-',
              state.nav20_sum);
-    }
+    } 
+#endif
 
     state.nav20_sum = 0;
     state.nav20_count = 0;
@@ -150,7 +156,7 @@ void TrackingEngine::processEpoch(
   {
     fprintf(
         out,
-        "%s PRN=%d epoch_tick=%u ms=%u epoch_idx=%llu off=%d epochN=%u epochPi=%d epochPq=%d epochSym=%c\n",
+        "\n%s PRN=%d epoch_tick=%u ms=%u epoch_idx=%llu off=%d epochN=%u epochPi=%d epochPq=%d epochSym=%c\n",
         get_iso8601_timestamp(unixSecond, msCount).c_str(),
         state.prn,
         epoch.sample_tick,
@@ -168,7 +174,7 @@ void TrackingEngine::processEpoch(
     {
       fflush(out);
       file_logging_enabled = false;
-      printf("[LOG] Stopped file logging after %llu ms\n", logged_ms);
+      printf("\n[LOG] Stopped file logging after %llu ms\n", logged_ms);
     }
   }
 }
@@ -220,7 +226,7 @@ bool TrackingEngine::step(
             aligned_write - ms_samples;
 
         printf(
-            "[TRK JUMP] PRN %d lag=%.1f margin=%.1f cursor=%llu oldest=%llu write=%llu -> %llu\n",
+            "\n[TRK JUMP] PRN %d lag=%.1f margin=%.1f cursor=%llu oldest=%llu write=%llu -> %llu\n",
             state.prn,
             lag_ms,
             margin_ms,
@@ -257,7 +263,7 @@ bool TrackingEngine::step(
       if (this_index != current_cursor)
       {
         printf(
-            "[CURSOR MISMATCH] cursor=%llu sample_index=%llu\n",
+            "\n[CURSOR MISMATCH] cursor=%llu sample_index=%llu\n",
             current_cursor,
             this_index);
       }
@@ -268,7 +274,7 @@ bool TrackingEngine::step(
         if (this_index != expected)
         {
           int64_t delta = (int64_t)this_index - (int64_t)expected;
-          printf("[CURSOR MISMATCH] cursor=%llu sample_index=%llu delta=%lld\n",
+          printf("\n[CURSOR MISMATCH] cursor=%llu sample_index=%llu delta=%lld\n",
                  current_cursor, this_index, delta);
         }
       }
@@ -282,7 +288,7 @@ bool TrackingEngine::step(
       if (res.consumed_sample_count != feed_samples)
       {
         printf(
-            "[TRK NOTE] correlator reported consumed=%zu, forcing feed=%d\n",
+            "\n[TRK NOTE] correlator reported consumed=%zu, forcing feed=%d\n",
             res.consumed_sample_count,
             feed_samples);
       }
@@ -301,26 +307,30 @@ bool TrackingEngine::step(
         //          printf(
         //              "epoch[%zu] sym=%d Pi=%d Pq=%d N=%u off=%d\n", idx, epoch.symbol,
         //              epoch.Pi, epoch.Pq, epoch.sample_count, epoch.offset_samples);
-        printf(
-            "[TRK] PRN %3d SNR:%5.1f dF:%8.1f Code:%7.2f used:%5zu blockPi:% 7d blockPq:% 7d epochs:%zu\n",
-            state.prn,
-            res.snr,
-            res.doppler_hz,
-            res.code_phase,
-            res.consumed_sample_count,
-            res.Pi,
-            res.Pq,
-            res.epochs.size());
+        int pi_k = res.Pi / 1000;
+        int pq_k = res.Pq / 1000;
+printf(
+    "\r[TRK] %03d S%5.1f C%7.2f D%+7.1f Pi%+5dk Pq%+4dk N%02d R%4.2f",
+    state.prn,
+    res.snr,
+    res.code_phase,
+    res.doppler_hz,
+    pi_k,
+    pq_k,
+    state.nav_phase_best,
+    state.nav_phase_ratio);
 
-        #ifdef TRK_LAG_DEBUG
+        fflush(stdout);
+
+#ifdef TRK_LAG_DEBUG
         printf(
-            "[LAG] PRN %d lag=%.1f ms cursor=%llu oldest=%llu write=%llu\n",
+            "\n[LAG] PRN %d lag=%.1f ms cursor=%llu oldest=%llu write=%llu\n",
             state.prn,
             lag_ms,
             state.sampleCursor,
             oldest_available,
             write);
-        #endif
+#endif
       }
     }
   }

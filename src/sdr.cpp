@@ -81,7 +81,7 @@ int main(int argc, char *argv[])
             {
                 if (rx.validate_ring_continuity())
                 {
-                    printf("[RING OK] write=%llu\n", rx.get_write_index());
+//                    printf("\n[RING OK] write=%llu\n", rx.get_write_index());
                 }
             }
 
