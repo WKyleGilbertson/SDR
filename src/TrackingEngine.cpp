@@ -52,28 +52,42 @@ void TrackingEngine::processEpoch(
 
   if (iq_log && !iq_log_header_written)
   {
-    fprintf(iq_log,
-            "epoch,prn,Pi,Pq,symbol,snr,doppler,code_phase,prompt_mag\n");
+fprintf(iq_log,
+        "epoch,prn,Ei,Eq,Pi,Pq,Li,Lq,symbol,snr,doppler,code_phase,E_mag,P_mag,L_mag\n");
     iq_log_header_written = true;
   }
 
   if (iq_log && iq_log_rows < max_iq_log_rows)
   {
-    double prompt_mag =
-        std::sqrt((double)epoch.Pi * epoch.Pi +
-                  (double)epoch.Pq * epoch.Pq);
+double E_mag =
+    std::sqrt((double)epoch.Ei * epoch.Ei +
+              (double)epoch.Eq * epoch.Eq);
 
-    fprintf(iq_log,
-            "%llu,%d,%d,%d,%d,%.1f,%.1f,%.3f,%.1f\n",
-            state.epoch_counter,
-            state.prn,
-            epoch.Pi,
-            epoch.Pq,
-            sym,
-            state.last_snr,
-            state.last_doppler_hz,
-            state.last_code_phase,
-            prompt_mag);
+double P_mag =
+    std::sqrt((double)epoch.Pi * epoch.Pi +
+              (double)epoch.Pq * epoch.Pq);
+
+double L_mag =
+    std::sqrt((double)epoch.Li * epoch.Li +
+              (double)epoch.Lq * epoch.Lq);
+
+fprintf(iq_log,
+        "%llu,%d,%d,%d,%d,%d,%d,%d,%d,%.1f,%.1f,%.3f,%.1f,%.1f,%.1f\n",
+        state.epoch_counter,
+        state.prn,
+        epoch.Ei,
+        epoch.Eq,
+        epoch.Pi,
+        epoch.Pq,
+        epoch.Li,
+        epoch.Lq,
+        sym,
+        state.last_snr,
+        state.last_doppler_hz,
+        state.last_code_phase,
+        E_mag,
+        P_mag,
+        L_mag);
 
     iq_log_rows++;
 

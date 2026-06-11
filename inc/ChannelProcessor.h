@@ -11,8 +11,12 @@
 #include "PCSEngine.hpp" // This defines AcqResult
 
 struct EpochResult{
+    int32_t Ei;
+    int32_t Eq;
     int32_t Pi;
     int32_t Pq;
+    int32_t Li;
+    int32_t Lq;
     uint32_t sample_count;
     uint64_t sample_index;
     uint32_t sample_tick;

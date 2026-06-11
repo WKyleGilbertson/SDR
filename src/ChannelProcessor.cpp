@@ -203,8 +203,12 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
             res.unix_time = samples[i].unix_time;
 
             EpochResult epoch = {};
+            epoch.Ei = _epochAcc.Ei;
+            epoch.Eq = _epochAcc.Eq;
             epoch.Pi = _epochAcc.Pi;
             epoch.Pq = _epochAcc.Pq;
+            epoch.Li = _epochAcc.Li;
+            epoch.Lq = _epochAcc.Lq;
             epoch.sample_count = _epochSampleCount;
             epoch.sample_index = samples[i].sample_index;
             epoch.sample_tick = samples[i].sample_tick;
