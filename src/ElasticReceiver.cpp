@@ -284,42 +284,45 @@ bool ElasticReceiver::validate_ring_continuity(size_t lookback)
 {
     std::lock_guard<std::mutex> lock(_ring_mtx);
 
-    if (_write_index < 2)
+    if (_write_index < 2 || _ring_capacity == 0)
         return true;
 
-    uint64_t end =
+    uint64_t count =
         (_write_index < lookback)
             ? _write_index
-            : lookback;
+            : (uint64_t)lookback;
 
-    uint64_t start =
-        (_write_index - end);
+    if (count < 2)
+        return true;
 
-    for (uint64_t i = start + 1;
-         i < _write_index;
-         ++i)
+    uint64_t start = _write_index - count;
+
+    for (uint64_t i = start + 1; i < _write_index; ++i)
     {
         const RawSample &prev =
-            _sample_ring[(i - 1) %
-                         _ring_capacity];
+            _sample_ring[(i - 1) % _ring_capacity];
 
         const RawSample &curr =
-            _sample_ring[i %
-                         _ring_capacity];
+            _sample_ring[i % _ring_capacity];
 
         uint32_t expected =
-            prev.sample_index + 1;
+            (uint32_t)(prev.sample_index + 1u);
 
-        if (curr.sample_index != expected)
+        uint32_t got =
+            curr.sample_index;
+
+        if (got != expected)
         {
             fprintf(stdout,
-                    "[RING BREAK] "
-                    "idx=%llu "
+                    "\n[RING BREAK] "
+                    "logical=%llu "
+                    "prev=%I64u "
                     "expected=%u "
                     "got=%u\n",
                     i,
+                    prev.sample_index,
                     expected,
-                    curr.sample_index);
+                    got);
 
             return false;
         }
