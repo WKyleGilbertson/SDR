@@ -1,4 +1,5 @@
 #include "TrackingEngine.h"
+#include <cmath>
 // #define TRK_LAG_DEBUG
 // #define DBG_NAV20
 
@@ -43,6 +44,46 @@ void TrackingEngine::processEpoch(
 {
   int8_t sym = epoch.symbol;
   int32_t prompt_i = epoch.Pi;
+
+  if (iq_log == nullptr)
+  {
+    iq_log = fopen("tracking_iq.csv", "w");
+  }
+
+  if (iq_log && !iq_log_header_written)
+  {
+    fprintf(iq_log,
+            "epoch,prn,Pi,Pq,symbol,snr,doppler,code_phase,prompt_mag\n");
+    iq_log_header_written = true;
+  }
+
+  if (iq_log && iq_log_rows < max_iq_log_rows)
+  {
+    double prompt_mag =
+        std::sqrt((double)epoch.Pi * epoch.Pi +
+                  (double)epoch.Pq * epoch.Pq);
+
+    fprintf(iq_log,
+            "%llu,%d,%d,%d,%d,%.1f,%.1f,%.3f,%.1f\n",
+            state.epoch_counter,
+            state.prn,
+            epoch.Pi,
+            epoch.Pq,
+            sym,
+            state.last_snr,
+            state.last_doppler_hz,
+            state.last_code_phase,
+            prompt_mag);
+
+    iq_log_rows++;
+
+    if (iq_log_rows == max_iq_log_rows)
+    {
+      fflush(iq_log);
+      printf("\n[IQLOG] Wrote %llu rows to tracking_iq.csv\n",
+             iq_log_rows);
+    }
+  }
 
   for (int phase = 0; phase < 20; ++phase)
   {
@@ -128,38 +169,38 @@ void TrackingEngine::processEpoch(
         ratio);
 
     printf("[NAVDEC]");
-int best_dec_phase = -1;
-int best_dec_score = -999999;
+    int best_dec_phase = -1;
+    int best_dec_score = -999999;
 
-int best_pre = 0;
-int best_pass = 0;
-int best_fail = 0;
+    int best_pre = 0;
+    int best_pass = 0;
+    int best_fail = 0;
 
-for (int p = 0; p < 20; ++p)
-{
-    int pre  = state.decoder[p]->getPreambleCandidateCount();
-    int pass = state.decoder[p]->getParityPassCount();
-    int fail = state.decoder[p]->getParityFailCount();
-
-    int score = pass * 20 - fail;
-
-    if (score > best_dec_score)
+    for (int p = 0; p < 20; ++p)
     {
+      int pre = state.decoder[p]->getPreambleCandidateCount();
+      int pass = state.decoder[p]->getParityPassCount();
+      int fail = state.decoder[p]->getParityFailCount();
+
+      int score = pass * 20 - fail;
+
+      if (score > best_dec_score)
+      {
         best_dec_score = score;
         best_dec_phase = p;
 
-        best_pre  = pre;
+        best_pre = pre;
         best_pass = pass;
         best_fail = fail;
+      }
     }
-}
 
-printf(" D%02d p%d +%d -%d sc%d\n",
-       best_dec_phase,
-       best_pre,
-       best_pass,
-       best_fail,
-       best_dec_score);
+    printf(" D%02d p%d +%d -%d sc%d\n",
+           best_dec_phase,
+           best_pre,
+           best_pass,
+           best_fail,
+           best_dec_score);
   }
 
   char epoch_symbol = (sym > 0) ? '#' : '-';
@@ -239,12 +280,11 @@ bool TrackingEngine::step(
     while (true)
     {
       uint64_t write = rx.get_write_index();
-      uint64_t ring_capacity = ms_samples * 250;
 
-      uint64_t oldest_available =
-          (write > ring_capacity)
-              ? (write - ring_capacity)
-              : 0;
+      auto timing =
+          rx.get_timing_status(state.sampleCursor, ms_samples);
+
+      uint64_t oldest_available = timing.oldest_available;
 
       int64_t lag_samples =
           (int64_t)write - (int64_t)state.sampleCursor;
@@ -337,6 +377,10 @@ bool TrackingEngine::step(
       state.sampleCursor += feed_samples;
 
       state.total_tracked_ms++;
+
+      state.last_snr = res.snr;
+      state.last_doppler_hz = res.doppler_hz;
+      state.last_code_phase = res.code_phase;
 
       for (const auto &epoch : res.epochs)
       {

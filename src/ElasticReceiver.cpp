@@ -6,7 +6,7 @@ ElasticReceiver::ElasticReceiver(size_t max_blocks)
 {
     _staging_buffer.reserve(_samples_per_ms / 2);
     _ring_capacity =
-        _samples_per_ms * 250;
+        _samples_per_ms * RING_DEPTH_MS;
 
     _sample_ring.resize(
         _ring_capacity);
@@ -92,7 +92,7 @@ void ElasticReceiver::ingest_thread()
             current_fs_rate = hdr->fs_rate;
             _samples_per_ms = (uint16_t)(current_fs_rate / 1000);
             _packets_per_ms = (uint8_t)(_samples_per_ms / 2046);
-            _ring_capacity = _samples_per_ms * 250;
+            _ring_capacity = _samples_per_ms * RING_DEPTH_MS;
             _sample_ring.clear();
             _sample_ring.resize(_ring_capacity);
             fprintf(stdout, "[*] Rate Encoded: %8u Hz (%hhu PktsPerMS)\n",
@@ -278,6 +278,38 @@ void ElasticReceiver::unpack_to_ring(
             _global_sample_index++;
         _write_index++;
     }
+}
+
+RingTimingStatus ElasticReceiver::get_timing_status(
+    uint64_t point,
+    size_t samples_per_ms) const
+{
+    std::lock_guard<std::mutex> lock(_ring_mtx);
+
+    RingTimingStatus s = {};
+
+    s.write_index = _write_index;
+    s.capacity_samples = _ring_capacity;
+    s.point = point;
+
+    s.oldest_available =
+        (_write_index > _ring_capacity)
+            ? (_write_index - _ring_capacity)
+            : 0;
+
+    s.lag_ms =
+        (double)((int64_t)_write_index - (int64_t)point) /
+        (double)samples_per_ms;
+
+    s.margin_ms =
+        (double)((int64_t)point - (int64_t)s.oldest_available) /
+        (double)samples_per_ms;
+
+    s.ring_ms =
+        (double)_ring_capacity /
+        (double)samples_per_ms;
+
+    return s;
 }
 
 bool ElasticReceiver::validate_ring_continuity(size_t lookback)

@@ -5,17 +5,23 @@
 #include "L1IFUtil.hpp"  // Provides RFE_Header_t
 #include "PCSEngine.hpp" // Contains AcqResult and unpackL1IF
 
-class AcquisitionMgr {
+class AcquisitionMgr
+{
 private:
-    PCSEngine& m_pcs;
+    PCSEngine &m_pcs;
     const size_t FFT_SIZE = 16384;
     const int NUM_MS = 5;
 
 public:
-    AcquisitionMgr(PCSEngine& engine) : m_pcs(engine) {}
+    AcquisitionMgr(PCSEngine &engine) : m_pcs(engine) {}
 
     std::vector<AcqResult> run(
-        const RFE_Header_t& meta,
-        RawSample* samples,
-        size_t sample_count); 
+        const RFE_Header_t &meta,
+        RawSample *samples,
+        size_t sample_count);
+    AcqResult runSingle(
+        const RFE_Header_t &meta,
+        RawSample *samples,
+        size_t sample_count,
+        int prn);
 };

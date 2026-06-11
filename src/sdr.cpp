@@ -17,6 +17,76 @@
 #include "TrackingEngine.h"
 #include "NavDecoder.h"
 
+static bool runFreshFocusedAcquisition(
+    ElasticReceiver &rx,
+    AcquisitionMgr &acqMgr,
+    const RFE_Header_t &meta,
+    uint32_t focusPRN,
+    size_t ms_samples,
+    size_t acq_samples,
+    AcqResult &fresh,
+    uint64_t &fresh_cursor)
+{
+    uint64_t write = rx.get_write_index();
+
+    uint64_t aligned_write =
+        write - (write % ms_samples);
+
+    if (aligned_write < acq_samples)
+        return false;
+
+    fresh_cursor =
+        aligned_write - acq_samples;
+
+    RawSample *fresh_ptr = nullptr;
+    std::vector<RawSample> fresh_window;
+
+    if (!rx.get_window(
+            fresh_cursor,
+            fresh_ptr,
+            acq_samples,
+            fresh_window))
+    {
+        return false;
+    }
+
+    auto t0 =
+        std::chrono::high_resolution_clock::now();
+
+    fresh =
+        acqMgr.runSingle(
+            meta,
+            fresh_ptr,
+            acq_samples,
+            (int)focusPRN);
+
+    auto t1 =
+        std::chrono::high_resolution_clock::now();
+
+    double elapsed_ms =
+        std::chrono::duration<double, std::milli>(t1 - t0).count();
+
+    printf("[*] Fresh acquisition PRN %d took %.1f ms\n",
+           focusPRN,
+           elapsed_ms);
+
+    if (fresh.snr <= 9.0f)
+    {
+        printf("[!] Fresh acquisition failed PRN %d SNR %.1f\n",
+               focusPRN,
+               fresh.snr);
+        return false;
+    }
+
+    printf(" FRESH | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f\n",
+           fresh.prn,
+           fresh.snr,
+           fresh.bin,
+           fresh.codePhase);
+
+    return true;
+}
+
 int main(int argc, char *argv[])
 {
     FILE *out = fopen("output.bin", "wb");
@@ -29,15 +99,9 @@ int main(int argc, char *argv[])
     versionInfo v;
     v.printVersion();
     RFE_Header_t meta = {};
-    //    TimeTrio t3;
     static int dbg_counter = 0;
-    //    const uint64_t max_logged_ms = 250;
-    //    uint64_t logged_ms = 0;
-    //    bool file_logging_enabled = true;
     TrackingEngine tracking;
-    //    ChannelState rxState(0, 16368000.0, AcqResult(), G2INIT());
 
-    //    auto system_start = std::chrono::steady_clock::now();
     uint32_t focusPRN = 131;
     if (argc > 1 && argv[1] != nullptr)
     {
@@ -65,8 +129,6 @@ int main(int argc, char *argv[])
         PCSEngine pcs((float)meta.fs_rate);
         AcquisitionMgr acqMgr(pcs);
         bool acq_needed = true;
-        //        auto start_wall = std::chrono::steady_clock::now();
-        //        const int tracking_ms = 1;
         const int acq_ms = 5;
         const size_t ms_samples = (size_t)(meta.fs_rate / 1000.0);
         const size_t acq_samples = ms_samples * acq_ms;
@@ -160,11 +222,29 @@ int main(int argc, char *argv[])
 
                     if (focusTarget != nullptr)
                     {
+                        AcqResult fresh = {};
+                        uint64_t fresh_cursor = 0;
+
+                        if (!runFreshFocusedAcquisition(
+                                rx,
+                                acqMgr,
+                                meta,
+                                focusPRN,
+                                ms_samples,
+                                acq_samples,
+                                fresh,
+                                fresh_cursor))
+                        {
+                            printf("[!] Unable to refresh focused acquisition for PRN %d\n",
+                                   focusPRN);
+                            continue;
+                        }
+
                         tracking.activeChannels.emplace_back(
-                            focusTarget->prn,
+                            fresh.prn,
                             (double)meta.fs_rate,
-                            *focusTarget,
-                            pcs.getSV(focusTarget->prn));
+                            fresh,
+                            pcs.getSV(fresh.prn));
 
                         for (int phase = 0; phase < 20; ++phase)
                         {
@@ -174,11 +254,13 @@ int main(int argc, char *argv[])
                         auto &state = tracking.activeChannels.front();
 
                         state.total_tracked_ms = 0;
-                        state.handover_sample_tick = (uint32_t)std::round(focusTarget->codePhase);
+
+                        // state.handover_sample_tick = (uint32_t)std::round(focusTarget->codePhase);
+                        state.handover_sample_tick = (uint32_t)std::round(fresh.codePhase);
                         state.handover_unix_time = acq_ptr[0].unix_time;
+                        state.sampleCursor = fresh_cursor + acq_samples;
 
                         // Important: add this field to ChannelState next.
-                        //                        state.sampleCursor = acq_cursor + acq_samples;
                         uint64_t write = rx.get_write_index();
                         uint64_t aligned_write = write - (write % ms_samples);
 
@@ -186,9 +268,19 @@ int main(int argc, char *argv[])
 
                         acq_needed = false;
 
-                        printf("[*] HANDOVER SUCCESS: acquisition window [%llu, %llu)\n",
-                               acq_cursor,
-                               acq_cursor + acq_samples);
+                        printf("[*] HANDOVER SUCCESS: fresh acquisition window [%llu, %llu)\n",
+                               fresh_cursor,
+                               fresh_cursor + acq_samples);
+                        auto timing =
+                            rx.get_timing_status(
+                                fresh_cursor + acq_samples,
+                                ms_samples);
+
+                        printf(
+                            "[*] Fresh handoff lag=%.1f ms margin=%.1f ms ring=%.1f ms\n",
+                            timing.lag_ms,
+                            timing.margin_ms,
+                            timing.ring_ms);
 
                         continue;
                     }

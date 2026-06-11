@@ -38,7 +38,9 @@ struct ChannelState
     int nav_phase_best = -1;
     double nav_phase_ratio = 0.0;
     int8_t last_nav_bit = 0;
-
+    double last_snr = 0.0;
+    double last_doppler_hz = 0.0;
+    double last_code_phase = 0.0;
     uint64_t last_logged_sample_index = 0;
     uint64_t sampleCursor = 0;
     uint64_t total_tracked_ms = 0;
@@ -63,4 +65,8 @@ private:
     bool file_logging_enabled = true;
     uint64_t logged_ms = 0;
     static constexpr uint64_t max_logged_ms = 250;
+    FILE *iq_log = nullptr;
+    bool iq_log_header_written = false;
+    uint64_t iq_log_rows = 0;
+    static constexpr uint64_t max_iq_log_rows = 20000;
 };

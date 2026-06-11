@@ -13,6 +13,18 @@ struct MillisecondBlock
     std::vector<uint8_t> data; // 8184 bytes
 };
 
+struct RingTimingStatus
+{
+    uint64_t write_index = 0;
+    uint64_t oldest_available = 0;
+    uint64_t point = 0;
+    uint64_t capacity_samples = 0;
+
+    double lag_ms = 0.0;
+    double margin_ms = 0.0;
+    double ring_ms = 0.0;
+};
+
 class ElasticReceiver
 {
 public:
@@ -53,6 +65,7 @@ public:
     };
 
     TimeTrio get_time_trio();
+    RingTimingStatus get_timing_status( uint64_t point, size_t samples_per_ms) const;
 
 private:
     void ingest_thread();
@@ -63,7 +76,7 @@ private:
     uint64_t _last_seq_num = 0;
     // std::deque<MillisecondBlock> _ready_queue; /* ChatGPT removed */
     std::vector<RawSample> _sample_ring;
-    std::mutex _ring_mtx;
+    mutable std::mutex _ring_mtx;
     uint64_t _write_index = 0;
     size_t _ring_capacity = 0;
 
@@ -84,4 +97,5 @@ private:
     sockaddr_in _relay_addr{};
 
     size_t _max_queue_size;
+    static constexpr size_t RING_DEPTH_MS = 1000;
 };
