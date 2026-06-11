@@ -29,15 +29,15 @@ int main(int argc, char *argv[])
     versionInfo v;
     v.printVersion();
     RFE_Header_t meta = {};
-//    TimeTrio t3;
+    //    TimeTrio t3;
     static int dbg_counter = 0;
-//    const uint64_t max_logged_ms = 250;
-//    uint64_t logged_ms = 0;
-//    bool file_logging_enabled = true;
+    //    const uint64_t max_logged_ms = 250;
+    //    uint64_t logged_ms = 0;
+    //    bool file_logging_enabled = true;
     TrackingEngine tracking;
-//    ChannelState rxState(0, 16368000.0, AcqResult(), G2INIT());
+    //    ChannelState rxState(0, 16368000.0, AcqResult(), G2INIT());
 
-//    auto system_start = std::chrono::steady_clock::now();
+    //    auto system_start = std::chrono::steady_clock::now();
     uint32_t focusPRN = 131;
     if (argc > 1 && argv[1] != nullptr)
     {
@@ -65,8 +65,8 @@ int main(int argc, char *argv[])
         PCSEngine pcs((float)meta.fs_rate);
         AcquisitionMgr acqMgr(pcs);
         bool acq_needed = true;
-//        auto start_wall = std::chrono::steady_clock::now();
-//        const int tracking_ms = 1;
+        //        auto start_wall = std::chrono::steady_clock::now();
+        //        const int tracking_ms = 1;
         const int acq_ms = 5;
         const size_t ms_samples = (size_t)(meta.fs_rate / 1000.0);
         const size_t acq_samples = ms_samples * acq_ms;
@@ -81,7 +81,7 @@ int main(int argc, char *argv[])
             {
                 if (rx.validate_ring_continuity())
                 {
-//                    printf("\n[RING OK] write=%llu\n", rx.get_write_index());
+                    //                    printf("\n[RING OK] write=%llu\n", rx.get_write_index());
                 }
             }
 
@@ -138,7 +138,7 @@ int main(int argc, char *argv[])
 
                 if (!results.empty())
                 {
-                    //activeChannels.clear();
+                    // activeChannels.clear();
                     tracking.activeChannels.clear();
 
                     const AcqResult *focusTarget = nullptr;
@@ -166,7 +166,10 @@ int main(int argc, char *argv[])
                             *focusTarget,
                             pcs.getSV(focusTarget->prn));
 
-                        tracking.activeChannels.back().decoder->setFocus(true);
+                        for (int phase = 0; phase < 20; ++phase)
+                        {
+                            tracking.activeChannels.back().decoder[phase]->setFocus(false);
+                        }
 
                         auto &state = tracking.activeChannels.front();
 

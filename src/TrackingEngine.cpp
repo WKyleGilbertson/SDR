@@ -6,7 +6,10 @@ ChannelState::ChannelState(int p, double fs, const AcqResult &res, G2INIT s)
     : prn(p), result(res), sv(s)
 {
   processor = std::make_unique<ChannelProcessor>(fs, result, sv);
-  decoder = std::make_unique<NavDecoder>(p);
+  for (int p = 0; p < 20; ++p)
+  {
+    decoder[p] = std::make_unique<NavDecoder>(prn);
+  }
 }
 
 void TrackingEngine::resetNavAccumulation(ChannelState &state)
@@ -48,12 +51,19 @@ void TrackingEngine::processEpoch(
 
     if (((state.epoch_counter + 1 + 20 - phase) % 20) == 0)
     {
+      int64_t prompt_sum = state.nav_phase_prompt_sum[phase];
+
+      int8_t phase_bit =
+          (prompt_sum >= 0) ? 1 : -1;
+
+      state.decoder[phase]->processBit(phase_bit);
+
       state.nav_phase_score[phase] +=
           std::abs(state.nav_phase_sum[phase]);
 
       state.nav_phase_prompt_score[phase] =
           (state.nav_phase_prompt_score[phase] * 31 +
-           std::llabs(state.nav_phase_prompt_sum[phase])) /
+           std::llabs(prompt_sum)) /
           32;
 
       state.nav_phase_windows[phase]++;
@@ -116,6 +126,40 @@ void TrackingEngine::processEpoch(
         second_phase,
         second_avg / 1000.0,
         ratio);
+
+    printf("[NAVDEC]");
+int best_dec_phase = -1;
+int best_dec_score = -999999;
+
+int best_pre = 0;
+int best_pass = 0;
+int best_fail = 0;
+
+for (int p = 0; p < 20; ++p)
+{
+    int pre  = state.decoder[p]->getPreambleCandidateCount();
+    int pass = state.decoder[p]->getParityPassCount();
+    int fail = state.decoder[p]->getParityFailCount();
+
+    int score = pass * 20 - fail;
+
+    if (score > best_dec_score)
+    {
+        best_dec_score = score;
+        best_dec_phase = p;
+
+        best_pre  = pre;
+        best_pass = pass;
+        best_fail = fail;
+    }
+}
+
+printf(" D%02d p%d +%d -%d sc%d\n",
+       best_dec_phase,
+       best_pre,
+       best_pass,
+       best_fail,
+       best_dec_score);
   }
 
   char epoch_symbol = (sym > 0) ? '#' : '-';
@@ -127,9 +171,7 @@ void TrackingEngine::processEpoch(
   if (state.nav20_count == 20)
   {
     int8_t nav_bit = (state.nav20_sum >= 0) ? 1 : -1;
-
     state.nav20_groups++;
-
 #ifdef DBG_NAV20
     if ((state.nav20_groups % 20) == 0)
     {
@@ -137,9 +179,8 @@ void TrackingEngine::processEpoch(
              state.prn,
              nav_bit > 0 ? '#' : '-',
              state.nav20_sum);
-    } 
+    }
 #endif
-
     state.nav20_sum = 0;
     state.nav20_count = 0;
   }
@@ -309,16 +350,16 @@ bool TrackingEngine::step(
         //              epoch.Pi, epoch.Pq, epoch.sample_count, epoch.offset_samples);
         int pi_k = res.Pi / 1000;
         int pq_k = res.Pq / 1000;
-printf(
-    "\r[TRK] %03d S%5.1f C%7.2f D%+7.1f Pi%+5dk Pq%+4dk N%02d R%4.2f",
-    state.prn,
-    res.snr,
-    res.code_phase,
-    res.doppler_hz,
-    pi_k,
-    pq_k,
-    state.nav_phase_best,
-    state.nav_phase_ratio);
+        printf(
+            "\r[TRK] %03d S%5.1f C%7.2f D%+7.1f Pi%+5dk Pq%+4dk N%02d R%4.2f",
+            state.prn,
+            res.snr,
+            res.code_phase,
+            res.doppler_hz,
+            pi_k,
+            pq_k,
+            state.nav_phase_best,
+            state.nav_phase_ratio);
 
         fflush(stdout);
 

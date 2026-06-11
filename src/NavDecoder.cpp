@@ -174,6 +174,13 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
     }
 }
 
+void NavDecoder::processBit(int8_t bit)
+{
+    std::vector<int8_t> oneBit;
+    oneBit.push_back(bit);
+    processBits(oneBit);
+}
+
 void NavDecoder::processBits(const std::vector<int8_t> &bits)
 {
     for (int8_t bit : bits)
@@ -185,21 +192,6 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
         _shiftReg64 = (_shiftReg64 >> 1) | ((uint64_t)bVal << 63);
 
         // 2. Continuous preferred character terminal display logic block
-        if (!_frameSync && _isFocused)
-        {
-            char navBitChar = (bit > 0) ? '#' : '-';
-            printf("%c", navBitChar);
-
-            static int continuousBitCount = 0;
-            continuousBitCount++;
-            if (continuousBitCount >= 60)
-            {
-                continuousBitCount = 0;
-                printf(" | [Reg8: 0x%02X]\n", (_shiftReg & 0xFF));
-            }
-            fflush(stdout);
-        }
-
         // --- PHASE 1: UNLOCKED PREAMBLE HUNTING ---
         if (!_frameSync)
         {
@@ -236,14 +228,17 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
 
             if (match)
             {
+                _preambleCandidateCount++;
                 _frameSync = true;
-                _subframeBitIdx = 0; // FIX: Initialize bit count to 0 at the PREAMBLE boundary edge
+                _subframeBitIdx = 8;
+                _shiftReg = 0x8B;
+                //_subframeBitIdx = 0; // FIX: Initialize bit count to 0 at the PREAMBLE boundary edge
                 _consecutivePasses = 0;
 
                 if (_isFocused)
                 {
-                    printf("\n\n>>> SUCCESS: PRN %d Preamble Locked! [%s] <<<\n",
-                           _prn, _isInverted ? "INVERTED" : "NORMAL");
+                    printf("\n[NAV] PRN %d Preamble candidate [%s]\n",
+                           _prn, _isInverted ? "INV" : "NORM");
                 }
             }
         }
@@ -289,7 +284,6 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
                 }
 
                 _shiftReg = originalRegBackup;
-                _shiftReg = 0; // Clear slider register for next word channel block tracking loop
             }
         }
     }
@@ -349,11 +343,13 @@ bool NavDecoder::handleWord(int wordNum)
     // 1. Verify parity using the last bit of the previous word (stored in _d30Star)
     if (!isParityValid(_shiftReg, _d30Star))
     {
+        _parityFailCount++;
         _consecutivePasses = 0;
         _frameSync = false; // Parity failure! Drop frame lock to resync safety boundaries
         return false;
     }
 
+    _parityPassCount++;
     _consecutivePasses++;
 
     // 2. Decode WORD 1: Telemetry Word (TLM)

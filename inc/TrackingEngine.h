@@ -20,7 +20,7 @@ struct ChannelState
     G2INIT sv;
 
     std::unique_ptr<ChannelProcessor> processor;
-    std::unique_ptr<NavDecoder> decoder;
+    std::unique_ptr<NavDecoder> decoder[20];
 
     std::deque<int8_t> epochSymbols;
     int nav20_sum = 0;
