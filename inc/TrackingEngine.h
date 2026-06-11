@@ -28,9 +28,13 @@ struct ChannelState
     uint64_t nav20_groups = 0;
     uint64_t epoch_counter = 0;
     int nav_phase_sum[20] = {};
-    int nav_phase_count[20] = {};
     int nav_phase_score[20] = {};
     int nav_phase_windows[20] = {};
+    int64_t nav_phase_prompt_sum[20] = {};
+    int64_t nav_phase_prompt_score[20] = {};
+    int8_t nav_phase_prev_bit[20] = {};
+    bool nav_phase_has_prev_bit[20] = {};
+    uint32_t nav_phase_flip_count[20] = {};
 
     uint64_t last_logged_sample_index = 0;
     uint64_t sampleCursor = 0;
@@ -46,15 +50,13 @@ class TrackingEngine
 {
 public:
     std::list<ChannelState> activeChannels;
-
-    bool step(
-        ElasticReceiver &rx,
-        const RFE_Header_t &meta,
-        uint32_t focusPRN,
-        FILE *out,
-        bool &acq_needed);
+    bool step(ElasticReceiver &rx, const RFE_Header_t &meta, uint32_t focusPRN,
+              FILE *out, bool &acq_needed);
 
 private:
+    void processEpoch(ChannelState &state, const EpochResult &epoch,
+                      const RFE_Header_t &meta, FILE *out);
+    void resetNavAccumulation(ChannelState &state);
     bool file_logging_enabled = true;
     uint64_t logged_ms = 0;
     static constexpr uint64_t max_logged_ms = 250;
