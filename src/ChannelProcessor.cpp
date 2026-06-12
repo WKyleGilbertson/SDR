@@ -57,7 +57,7 @@ void ChannelProcessor::calculateSNR(Accumulators &acc, float &snr)
 ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT &sv)
     : _fs(fs_rate), _carrNco(8, (float)fs_rate), _codeNco(4, (float)fs_rate), _m_sv(sv)
 {
-    _carrFreqBasis = 4.092e6f;
+    _carrFreqBasis = 4.092e6f + init.bin * 500.0f;
     _codeFreqBasis = 1.023e6f;
     resetAccumulators(_acc);
     resetAccumulators(_epochAcc);
@@ -67,8 +67,9 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     _samplesPerMs = (size_t)(_fs / 1000.0);
     _prn = init.prn;
     _doppler_hz = init.bin * 500.0f;
+    _oldCarrNco = 0.0f;
     _oldCarrError = 0.0f;
-    _oldCarrNco = _carrFreqBasis - (float)_doppler_hz;
+    //_oldCarrNco = _carrFreqBasis - (float)_doppler_hz;
     _oldCodeError = 0.0f;
     _oldCodeNco = ((float)_doppler_hz / 1540.0f);
     //_oldCodeNco = 0.0f;
@@ -90,6 +91,7 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     _codeNco.RakeSpacing(CorrelatorSpacing::halfChip);
 
     float spc = (float)_fs / 1023000.0f;
+    //int chipTravelDelay = 0;
     int chipTravelDelay = (int)std::round(32.0f / spc);
     _initialCodePhase = init.codePhase;
 
@@ -109,9 +111,11 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
         chipTravelDelay);
     /* End Debug*/
 
-    _carrNco.SetFrequency(_carrFreqBasis - (float)_doppler_hz);
+    //_currentCommandedFreq = _oldCarrNco;
+    _currentCommandedFreq = _carrFreqBasis;
+    //_carrNco.SetFrequency(_carrFreqBasis - (float)_doppler_hz);
+    _carrNco.SetFrequency(_currentCommandedFreq);
     _codeNco.SetFrequency(_codeFreqBasis);
-    _currentCommandedFreq = _oldCarrNco;
 
     _ca_replica.resize(1023);
     for (int i = 0; i < 1023; i++)
@@ -175,11 +179,11 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
         } 
         #endif
 
-        int8_t s = (int8_t)(_carrNco.sine(carrIdx) * 127.0f);
-        int8_t c = (int8_t)(_carrNco.cosine(carrIdx) * 127.0f);
+        int16_t s = (int16_t)(_carrNco.sine(carrIdx) * 127.0f);
+        int16_t c = (int16_t)(_carrNco.cosine(carrIdx) * 127.0f);
 
-        int8_t in_i = samples[i].i;
-        int8_t in_q = samples[i].q;
+        int16_t in_i = samples[i].i;
+        int16_t in_q = samples[i].q;
 
         int16_t bb_i = 0;
         int16_t bb_q = 0;
@@ -190,7 +194,7 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
         bb_q = (int16_t)(in_q * c - in_i * s);
         } else {
         bb_i = (int16_t)(in_i * c);
-        bb_q = (int16_t)(-in_i * s);
+        bb_q = (int16_t)(in_i * s);
         }
 /*
 static int mix_prints = 0;
@@ -270,7 +274,11 @@ if (mix_prints < 20)
     float E = sqrtf((Early_I * Early_I) + (Early_Q * Early_Q));
     float L = sqrtf((Late_I * Late_I) + (Late_Q * Late_Q));
     float P = sqrtf(totalPower);
-    float codeError = (P > 1e-6f) ? ((E - L) / (2.0f * P)) : 0.0f;
+    float E2 = Early_I * Early_I + Early_Q * Early_Q;
+    float L2 = Late_I * Late_I + Late_Q * Late_Q;
+
+//    float codeError = (P > 1e-6f) ? ((E - L) / (2.0f * P)) : 0.0f;
+    float codeError = ((E2 + L2)> 1e-6f) ? ((E2 - L2) / (E2 + L2)) : 0.0f;
 
     calculateSNR(_acc, _snr);
     _isLocked = (_snr > 12.0f);
@@ -280,18 +288,40 @@ if (mix_prints < 20)
     res.symbols[0] = res.symbol;
 
     // 3. Update Frequencies
-    float carrNcoUpdate = _oldCarrNco + (_carrLF.tau2 / _carrLF.tau1) * (carrError - _oldCarrError) + (carrError * (dynamicT / _carrLF.tau1));
-    _oldCarrNco = carrNcoUpdate;
-    _oldCarrError = carrError;
-    _doppler_hz = (double)(_carrFreqBasis - carrNcoUpdate);
 
-    float codeNcoUpdate = _oldCodeNco + (_codeLF.tau2 / _codeLF.tau1) * (codeError - _oldCodeError) + (codeError * (dynamicT / _codeLF.tau1));
+float carrNcoUpdate =
+    _oldCarrNco +
+    (_carrLF.tau2 / _carrLF.tau1) *
+    (carrError - _oldCarrError) *
+    (dynamicT / _carrLF.tau1);
+
+_oldCarrNco = carrNcoUpdate;
+_oldCarrError = carrError;
+
+_currentCommandedFreq =
+    _carrFreqBasis - carrNcoUpdate;
+
+_carrNco.SetFrequency(_currentCommandedFreq);
+
+_doppler_hz =
+    _currentCommandedFreq - 4.092e6f;
+
+float codeNcoUpdate =
+    _oldCodeNco +
+    (_codeLF.tau2 / _codeLF.tau1) *
+    (codeError - _oldCodeError) *
+    (dynamicT / _codeLF.tau1);
+
+_oldCodeNco = codeNcoUpdate;
+_oldCodeError = codeError;
+
+_codeNco.SetFrequency(_codeFreqBasis + codeNcoUpdate + ((float)_doppler_hz / 1540.0f));
+/*    float codeNcoUpdate = _oldCodeNco + (_codeLF.tau2 / _codeLF.tau1) * (codeError - _oldCodeError) + (codeError * (dynamicT / _codeLF.tau1));
     _oldCodeNco = codeNcoUpdate;
     _oldCodeError = codeError;
-    _currentCommandedFreq = carrNcoUpdate;
 
-    _carrNco.SetFrequency(_currentCommandedFreq);
     _codeNco.SetFrequency(_codeFreqBasis + codeNcoUpdate + ((float)_doppler_hz / 1540.0f));
+    */
 
     res.code_phase = boundary_code_phase;
     res.carrier_phase_error = carrError;
