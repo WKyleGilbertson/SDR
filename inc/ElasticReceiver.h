@@ -66,6 +66,8 @@ public:
 
     TimeTrio get_time_trio();
     RingTimingStatus get_timing_status( uint64_t point, size_t samples_per_ms) const;
+    bool input_is_complex() const { return _input_is_complex;}
+    bool input_mode_checked() const {return _input_mode_checked;}
 
 private:
     void ingest_thread();
@@ -98,4 +100,6 @@ private:
 
     size_t _max_queue_size;
     static constexpr size_t RING_DEPTH_MS = 1000;
+    bool _input_is_complex = true;
+    bool _input_mode_checked = false;
 };

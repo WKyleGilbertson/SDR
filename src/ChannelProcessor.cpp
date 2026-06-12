@@ -175,22 +175,35 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
         } 
         #endif
 
-        int16_t bb_i = (int16_t)(samples[i].i * _carrNco.cosine(carrIdx) * 127);
-        int16_t bb_q = (int16_t)(samples[i].q * _carrNco.sine(carrIdx) * 127);
+        int8_t s = (int8_t)(_carrNco.sine(carrIdx) * 127.0f);
+        int8_t c = (int8_t)(_carrNco.cosine(carrIdx) * 127.0f);
 
+        int8_t in_i = samples[i].i;
+        int8_t in_q = samples[i].q;
+
+        // (I + jQ) * (cos - j sin)
+        int16_t bb_i = (int16_t)(in_i * c + in_q * s);
+        int16_t bb_q = (int16_t)(in_q * c - in_i * s);
+static int mix_prints = 0;
+if (mix_prints < 20)
+{
+    printf("mix in=(%d,%d) c=%d s=%d bb=(%d,%d)\n",
+           in_i, in_q, c, s, bb_i, bb_q);
+    mix_prints++;
+}
         _acc.Ei += (bb_i * _codeNco.Early);
-        _acc.Eq -= (bb_q * _codeNco.Early);
+        _acc.Eq += (bb_q * _codeNco.Early);
         _acc.Pi += (bb_i * _codeNco.Prompt);
-        _acc.Pq -= (bb_q * _codeNco.Prompt);
+        _acc.Pq += (bb_q * _codeNco.Prompt);
         _acc.Li += (bb_i * _codeNco.Late);
-        _acc.Lq -= (bb_q * _codeNco.Late);
+        _acc.Lq += (bb_q * _codeNco.Late);
 
         _epochAcc.Ei += (bb_i * _codeNco.Early);
-        _epochAcc.Eq -= (bb_q * _codeNco.Early);
+        _epochAcc.Eq += (bb_q * _codeNco.Early);
         _epochAcc.Pi += (bb_i * _codeNco.Prompt);
-        _epochAcc.Pq -= (bb_q * _codeNco.Prompt);
+        _epochAcc.Pq += (bb_q * _codeNco.Prompt);
         _epochAcc.Li += (bb_i * _codeNco.Late);
-        _epochAcc.Lq -= (bb_q * _codeNco.Late);
+        _epochAcc.Lq += (bb_q * _codeNco.Late);
         _epochSampleCount++;
 
         if (_codeNco.getRotations() < prev_rotations)

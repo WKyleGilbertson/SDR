@@ -239,7 +239,17 @@ void ElasticReceiver::unpack_to_ring(
     {
         const auto &e =
             lut[packed[i]];
+        static int unpack_debug_count = 0;
 
+        /*
+        if (unpack_debug_count < 32)
+        {
+            printf("[UNPACK] b=%02X s0=(%d,%d) s1=(%d,%d)\n",
+                   packed[i],
+                   e.s0.i, e.s0.q,
+                   e.s1.i, e.s1.q);
+            unpack_debug_count++;
+        } */
         size_t idx =
             _write_index %
             _ring_capacity;
@@ -247,7 +257,7 @@ void ElasticReceiver::unpack_to_ring(
         _sample_ring[idx].i =
             e.s0.i;
         _sample_ring[idx].q =
-            e.s0.q;
+            _input_is_complex ? e.s0.q : 0;
         _sample_ring[idx]
             .sample_tick =
             tick++;
@@ -266,7 +276,7 @@ void ElasticReceiver::unpack_to_ring(
         _sample_ring[idx].i =
             e.s1.i;
         _sample_ring[idx].q =
-            e.s1.q;
+            _input_is_complex ? e.s1.q : 0;
         _sample_ring[idx]
             .sample_tick =
             tick++;
@@ -277,6 +287,74 @@ void ElasticReceiver::unpack_to_ring(
             .sample_index =
             _global_sample_index++;
         _write_index++;
+    }
+
+    if (!_input_mode_checked && _write_index >= 16368ULL)
+    {
+        int q_m3 = 0, q_m1 = 0, q_p1 = 0, q_p3 = 0;
+
+        uint64_t ncheck64 =
+            (_write_index < 16368ULL)
+                ? _write_index
+                : 16368ULL;
+
+        size_t ncheck =
+            static_cast<size_t>(ncheck64);
+
+        for (size_t n = 0; n < ncheck; ++n)
+        {
+            const auto &s =
+                _sample_ring[n % _ring_capacity];
+
+            switch (s.q)
+            {
+            case -3:
+                q_m3++;
+                break;
+            case -1:
+                q_m1++;
+                break;
+            case 1:
+                q_p1++;
+                break;
+            case 3:
+                q_p3++;
+                break;
+            }
+        }
+
+        int q_total =
+            q_m3 + q_m1 + q_p1 + q_p3;
+
+        int q_max = q_m3;
+        if (q_m1 > q_max)
+            q_max = q_m1;
+        if (q_p1 > q_max)
+            q_max = q_p1;
+        if (q_p3 > q_max)
+            q_max = q_p3;
+
+        float dominance =
+            (q_total > 0)
+                ? ((float)q_max / (float)q_total)
+                : 1.0f;
+
+        _input_is_complex =
+            (dominance < 0.995f);
+        _input_mode_checked = true;
+
+        if (!_input_is_complex)
+        {
+            for (size_t n = 0; n < _ring_capacity; ++n)
+            {
+                _sample_ring[n].q = 0;
+            }
+        }
+
+        printf("[INPUT] %s\n",
+               _input_is_complex
+                   ? "Complex I/Q"
+                   : "Real IF");
     }
 }
 

@@ -44,8 +44,10 @@ void TrackingEngine::processEpoch(
 {
   int8_t sym = epoch.symbol;
   int32_t prompt_i = epoch.Pi;
+  static constexpr uint64_t max_iq_log_rows = 1000;
+  static bool iq_log_done = false;
 
-  if (iq_log == nullptr)
+  if (!iq_log_done && iq_log == nullptr)
   {
     iq_log = fopen("tracking_iq.csv", "w");
   }
@@ -53,7 +55,11 @@ void TrackingEngine::processEpoch(
   if (iq_log && !iq_log_header_written)
   {
 fprintf(iq_log,
-        "epoch,prn,Ei,Eq,Pi,Pq,Li,Lq,symbol,snr,doppler,code_phase,E_mag,P_mag,L_mag\n");
+        "epoch,prn,"
+        "Ei,Eq,Pi,Pq,Li,Lq,"
+        "symbol,snr,doppler,code_phase,"
+        "E_mag,P_mag,L_mag,"
+        "dll_disc,pll_disc\n");
     iq_log_header_written = true;
   }
 
@@ -71,8 +77,22 @@ double L_mag =
     std::sqrt((double)epoch.Li * epoch.Li +
               (double)epoch.Lq * epoch.Lq);
 
+double dll_disc = 0.0;
+double denom = E_mag + L_mag;
+
+if (denom > 1e-9)
+{
+  dll_disc = (E_mag - L_mag) / denom;
+}
+
+double pll_disc = std::atan2((double)epoch.Pq, (double)epoch.Pi);
+
 fprintf(iq_log,
-        "%llu,%d,%d,%d,%d,%d,%d,%d,%d,%.1f,%.1f,%.3f,%.1f,%.1f,%.1f\n",
+        "%llu,%d,"
+        "%d,%d,%d,%d,%d,%d,"
+        "%d,%.1f,%.1f,%.3f,"
+        "%.1f,%.1f,%.1f,"
+        "%.9f,%.9f\n",
         state.epoch_counter,
         state.prn,
         epoch.Ei,
@@ -87,16 +107,22 @@ fprintf(iq_log,
         state.last_code_phase,
         E_mag,
         P_mag,
-        L_mag);
+        L_mag,
+        dll_disc,
+        pll_disc);
 
-    iq_log_rows++;
+iq_log_rows++;
 
-    if (iq_log_rows == max_iq_log_rows)
-    {
-      fflush(iq_log);
-      printf("\n[IQLOG] Wrote %llu rows to tracking_iq.csv\n",
-             iq_log_rows);
-    }
+if (iq_log_rows == max_iq_log_rows)
+{
+  fflush(iq_log);
+  fclose(iq_log);
+  iq_log = nullptr;
+  iq_log_done = true;
+
+  printf("\n[IQLOG] Closed tracking_iq.csv after %llu rows\n",
+         iq_log_rows);
+}
   }
 
   for (int phase = 0; phase < 20; ++phase)
