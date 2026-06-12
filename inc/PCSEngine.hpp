@@ -13,16 +13,21 @@
 #define FIXED_POINT 16
 #include "kiss_fft.h"
 
+static constexpr int CODE_SCALE = 1024;
+static constexpr int NCO_SCALE_BITS = 10;
+static constexpr int CODE_SCALE_BITS = 0;
+static constexpr int TIME_MIX_SHIFT = 2;
+static constexpr int FREQ_CORR_SHIFT = CODE_SCALE_BITS;
 struct AcqResult
 {
-    int prn;                // Satellite PRN number
-    int bin;                // Doppler frequency bin index
-    int peakIndex;          // Sample index of the correlation peak
-    double peakMagnitude;   // Absolute power of the correlation peak
-    double snr;             // Signal-to-Noise Ratio in dB
-    float phase;            // Carrier Phase at the peak (in radians)
-    uint32_t sampleTick;     // Phase of incoming sample stream
-    float codePhase;         // sub-ms code phase (0.0 - 1022.99)
+    int prn;              // Satellite PRN number
+    int bin;              // Doppler frequency bin index
+    int peakIndex;        // Sample index of the correlation peak
+    double peakMagnitude; // Absolute power of the correlation peak
+    double snr;           // Signal-to-Noise Ratio in dB
+    float phase;          // Carrier Phase at the peak (in radians)
+    uint32_t sampleTick;  // Phase of incoming sample stream
+    float codePhase;      // sub-ms code phase (0.0 - 1022.99)
 };
 
 class PCSEngine
@@ -64,7 +69,7 @@ public:
     G2INIT getSV(int prn) { return m_sv_list.at(prn); }
     AcqResult search(int prn, const std::vector<kiss_fft_cpx> &rawData,
                      float centerFreq, int binRange, float binWidth,
-                    uint32_t sampleTick = 0);
+                     uint32_t sampleTick = 0);
 };
 
 #endif

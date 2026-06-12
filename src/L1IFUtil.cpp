@@ -36,7 +36,7 @@ static int16_t map_bits(uint8_t m, uint8_t s)
     int16_t val = (s == 0) ? 1 : -1;
     if (m != 0)
         val *= 3;
-    return val << 3; // Shifts values to +/- 8 and +/- 24
+    return val;
 }
 
 struct LUTContainer

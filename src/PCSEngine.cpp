@@ -41,7 +41,7 @@ void PCSEngine::initPrn(int prn)
     // 1. Fill 1ms exactly (16368 samples)
     for (size_t idx = 0; idx < 16368; idx++)
     {
-        m_codeFftCurrent[idx].r = (int16_t)sv.CODE[idx / 16] * 1024;
+        m_codeFftCurrent[idx].r = (int16_t)sv.CODE[idx / 16] * CODE_SCALE;
         m_codeFftCurrent[idx].i = 0;
     }
 
@@ -71,8 +71,8 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
                             float centerFreq, int binRange, float binWidth,
                             uint32_t sampleTick)
 {
-    //AcqResult bestResult = {prn, 0, 0, -99.0f, -99.0f, 0.0f, 0, sampleTick, 0.0f};
-    AcqResult bestResult {};
+    // AcqResult bestResult = {prn, 0, 0, -99.0f, -99.0f, 0.0f, 0, sampleTick, 0.0f};
+    AcqResult bestResult{};
     bestResult.prn = prn;
     bestResult.bin = 0;
     bestResult.peakIndex = 0;
@@ -99,8 +99,8 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
         {
             uint32_t ncoIdx = m_nco.clk();
             // Multiply float sin/cos by 32767 and cast to int16
-            m_ncoBuffer[idx].r = static_cast<int16_t>(m_nco.cosine(ncoIdx) * 1024.0f);
-            m_ncoBuffer[idx].i = static_cast<int16_t>(m_nco.sine(ncoIdx) * 1024.0f);
+            m_ncoBuffer[idx].r = static_cast<int16_t>(m_nco.cosine(ncoIdx) * CODE_SCALE);
+            m_ncoBuffer[idx].i = static_cast<int16_t>(m_nco.sine(ncoIdx) * CODE_SCALE);
         }
 
         // Zero out the padding using the struct members
@@ -116,14 +116,14 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
 
             // Stage 1: Mix with local NCO to baseband
             complex_mix(m_workspace.data(), blockStart,
-                         m_ncoBuffer.data(), N, 2);
+                        m_ncoBuffer.data(), N, TIME_MIX_SHIFT);
 
             // Stage 2: Forward FFT of the mixed signal
             kiss_fft(m_cfg_fwd, m_workspace.data(), m_workspace.data());
 
             // Stage 3: Frequency-domain correlation
             complex_mix(m_workspace.data(), m_workspace.data(),
-                        currentCodeFft.data(), N, 0);
+                      currentCodeFft.data(), N, FREQ_CORR_SHIFT);
 
             // Stage 4: Inverse FFT to get correlation magnitudes
             kiss_fft(m_cfg_inv, m_workspace.data(), m_workspace.data());
@@ -156,8 +156,9 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
 
         float peakPower = maxMag * maxMag;
         float avgNoisePower = (sumPower - peakPower) / (float)(N - 1);
-        float snr = (avgNoisePower > 1e-12f) ? 10.0f * 
-                std::log10f(peakPower / avgNoisePower) : -99.0f;
+        float snr = (avgNoisePower > 1e-12f) ? 10.0f *
+                                                   std::log10f(peakPower / avgNoisePower)
+                                             : -99.0f;
 
         // 1. After the peak search finishes finding peakIndex and bestResult
         if (snr > bestResult.snr)
@@ -165,7 +166,7 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
             // Capture the phase of the very last block processed at the peak index
             float peakR = (float)m_workspace[peakIndex].r;
             float peakI = (float)m_workspace[peakIndex].i;
-            //atan2 returns radians (-pi to pi)
+            // atan2 returns radians (-pi to pi)
             float phase = std::atan2f(peakI, peakR);
             // 2. Update bestResult assignment
             bestResult.bin = bin;

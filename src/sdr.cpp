@@ -200,7 +200,6 @@ int main(int argc, char *argv[])
 
                 if (!results.empty())
                 {
-                    // activeChannels.clear();
                     tracking.activeChannels.clear();
 
                     const AcqResult *focusTarget = nullptr;

@@ -5,6 +5,8 @@
 #include "L1IFUtil.hpp"  // Provides RFE_Header_t
 #include "PCSEngine.hpp" // Contains AcqResult and unpackL1IF
 
+static constexpr int ACQ_SAMPLE_SHIFT = 3;
+static constexpr float ACQ_SNR_THRESHOLD_DB = 9.0f;
 class AcquisitionMgr
 {
 private:

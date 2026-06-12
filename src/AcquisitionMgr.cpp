@@ -36,8 +36,8 @@ std::vector<AcqResult> AcquisitionMgr::run(
 
         for (size_t i = 0; i < samples_per_ms; ++i)
         {
-            dst[i].r = (kiss_fft_scalar)src[i].i;
-            dst[i].i = (kiss_fft_scalar)src[i].q;
+            dst[i].r = (kiss_fft_scalar)src[i].i<<ACQ_SAMPLE_SHIFT;
+            dst[i].i = (kiss_fft_scalar)src[i].q<<ACQ_SAMPLE_SHIFT;
         }
 
         // remaining FFT_SIZE - samples_per_ms stays zero-padded
@@ -57,7 +57,7 @@ std::vector<AcqResult> AcquisitionMgr::run(
                 500.0f,
                 aligned_anchor);
 
-        if (res.snr > 9.0f)
+        if (res.snr > ACQ_SNR_THRESHOLD_DB)
         {
             res.codePhase =
                 (float)res.peakIndex /
@@ -80,7 +80,7 @@ std::vector<AcqResult> AcquisitionMgr::run(
                 500.0f,
                 aligned_anchor);
 
-        if (res.snr > 9.0f)
+        if (res.snr > ACQ_SNR_THRESHOLD_DB) // Acquisiton Threshold
         {
             res.codePhase =
                 (float)res.peakIndex /
@@ -132,8 +132,8 @@ AcqResult AcquisitionMgr::runSingle(
 
         for (size_t i = 0; i < samples_per_ms; ++i)
         {
-            dst[i].r = (kiss_fft_scalar)src[i].i;
-            dst[i].i = (kiss_fft_scalar)src[i].q;
+            dst[i].r = (kiss_fft_scalar)src[i].i<<ACQ_SAMPLE_SHIFT;
+            dst[i].i = (kiss_fft_scalar)src[i].q<<ACQ_SAMPLE_SHIFT;
         }
     }
 
