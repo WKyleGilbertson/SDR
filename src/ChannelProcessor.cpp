@@ -181,16 +181,25 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
         int8_t in_i = samples[i].i;
         int8_t in_q = samples[i].q;
 
+        int16_t bb_i = 0;
+        int16_t bb_q = 0;
+
+        if (_input_is_complex) {
         // (I + jQ) * (cos - j sin)
-        int16_t bb_i = (int16_t)(in_i * c + in_q * s);
-        int16_t bb_q = (int16_t)(in_q * c - in_i * s);
+        bb_i = (int16_t)(in_i * c + in_q * s);
+        bb_q = (int16_t)(in_q * c - in_i * s);
+        } else {
+        bb_i = (int16_t)(in_i * c);
+        bb_q = (int16_t)(-in_i * s);
+        }
+/*
 static int mix_prints = 0;
 if (mix_prints < 20)
 {
     printf("mix in=(%d,%d) c=%d s=%d bb=(%d,%d)\n",
            in_i, in_q, c, s, bb_i, bb_q);
     mix_prints++;
-}
+} */
         _acc.Ei += (bb_i * _codeNco.Early);
         _acc.Eq += (bb_q * _codeNco.Early);
         _acc.Pi += (bb_i * _codeNco.Prompt);

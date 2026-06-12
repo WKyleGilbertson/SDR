@@ -74,6 +74,7 @@ public:
     int getPRN() const { return _prn; }
     bool isLocked() const { return _isLocked; }
     float getSNR() const { return (float)_snr; }
+    void setInputIsComplex(bool is_complex) { _input_is_complex = is_complex;}
 
 private:
     NCO _carrNco; // Carrier NCO (Initial ~4.092 MHz)
@@ -112,4 +113,5 @@ private:
     float _snrBufferI[20];                 // 20 ms tracking window
     float _snrBufferQ[20];                 // 20 ms tracking window
     int _snrBufferIndex = 0;
+    bool _input_is_complex = true;
 };

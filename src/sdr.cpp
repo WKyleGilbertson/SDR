@@ -244,6 +244,9 @@ int main(int argc, char *argv[])
                             (double)meta.fs_rate,
                             fresh,
                             pcs.getSV(fresh.prn));
+                            
+                            tracking.activeChannels.back()
+                             .processor->setInputIsComplex(rx.input_is_complex());
 
                         for (int phase = 0; phase < 20; ++phase)
                         {
