@@ -288,6 +288,7 @@ if (mix_prints < 20)
     res.symbols[0] = res.symbol;
 
     // 3. Update Frequencies
+    static constexpr bool OPEN_LOOP_TEST = true;
 
 float carrNcoUpdate =
     _oldCarrNco +
@@ -295,6 +296,14 @@ float carrNcoUpdate =
     (carrError - _oldCarrError) *
     (dynamicT / _carrLF.tau1);
 
+float codeNcoUpdate =
+    _oldCodeNco +
+    (_codeLF.tau2 / _codeLF.tau1) *
+    (codeError - _oldCodeError) *
+    (dynamicT / _codeLF.tau1);
+
+if (OPEN_LOOP_TEST)
+{
 _oldCarrNco = carrNcoUpdate;
 _oldCarrError = carrError;
 
@@ -306,22 +315,11 @@ _carrNco.SetFrequency(_currentCommandedFreq);
 _doppler_hz =
     _currentCommandedFreq - 4.092e6f;
 
-float codeNcoUpdate =
-    _oldCodeNco +
-    (_codeLF.tau2 / _codeLF.tau1) *
-    (codeError - _oldCodeError) *
-    (dynamicT / _codeLF.tau1);
-
 _oldCodeNco = codeNcoUpdate;
 _oldCodeError = codeError;
 
 _codeNco.SetFrequency(_codeFreqBasis + codeNcoUpdate + ((float)_doppler_hz / 1540.0f));
-/*    float codeNcoUpdate = _oldCodeNco + (_codeLF.tau2 / _codeLF.tau1) * (codeError - _oldCodeError) + (codeError * (dynamicT / _codeLF.tau1));
-    _oldCodeNco = codeNcoUpdate;
-    _oldCodeError = codeError;
-
-    _codeNco.SetFrequency(_codeFreqBasis + codeNcoUpdate + ((float)_doppler_hz / 1540.0f));
-    */
+}
 
     res.code_phase = boundary_code_phase;
     res.carrier_phase_error = carrError;
