@@ -102,4 +102,8 @@ private:
     static constexpr size_t RING_DEPTH_MS = 1000;
     bool _input_is_complex = true;
     bool _input_mode_checked = false;
+    int _real_votes = 0;
+    int _complex_votes = 0;
+    int _mode_checks = 0;
+    void update_input_mode_detector();
 };

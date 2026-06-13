@@ -289,72 +289,9 @@ void ElasticReceiver::unpack_to_ring(
         _write_index++;
     }
 
-    if (!_input_mode_checked && _write_index >= 16368ULL)
+    if (!_input_mode_checked)
     {
-        int q_m3 = 0, q_m1 = 0, q_p1 = 0, q_p3 = 0;
-
-        uint64_t ncheck64 =
-            (_write_index < 16368ULL)
-                ? _write_index
-                : 16368ULL;
-
-        size_t ncheck =
-            static_cast<size_t>(ncheck64);
-
-        for (size_t n = 0; n < ncheck; ++n)
-        {
-            const auto &s =
-                _sample_ring[n % _ring_capacity];
-
-            switch (s.q)
-            {
-            case -3:
-                q_m3++;
-                break;
-            case -1:
-                q_m1++;
-                break;
-            case 1:
-                q_p1++;
-                break;
-            case 3:
-                q_p3++;
-                break;
-            }
-        }
-
-        int q_total =
-            q_m3 + q_m1 + q_p1 + q_p3;
-
-        int q_max = q_m3;
-        if (q_m1 > q_max)
-            q_max = q_m1;
-        if (q_p1 > q_max)
-            q_max = q_p1;
-        if (q_p3 > q_max)
-            q_max = q_p3;
-
-        float dominance =
-            (q_total > 0)
-                ? ((float)q_max / (float)q_total)
-                : 1.0f;
-
-        _input_is_complex =
-            (dominance < 0.995f);
-        _input_mode_checked = true;
-
-        if (!_input_is_complex)
-        {
-            for (size_t n = 0; n < _ring_capacity; ++n)
-            {
-                _sample_ring[n].q = 0;
-            }
-        }
-
-        printf("[INPUT] %s\n",
-               _input_is_complex
-                   ? "Complex I/Q"
-                   : "Real IF");
+        update_input_mode_detector();
     }
 }
 
@@ -469,4 +406,109 @@ bool ElasticReceiver::get_window(
 
     out_ptr = scratch.data();
     return true;
+}
+
+void ElasticReceiver::update_input_mode_detector()
+{
+    int q_m3 = 0, q_m1 = 0, q_p1 = 0, q_p3 = 0;
+
+    if (_write_index < 16368ULL)
+        return;
+
+    uint64_t ncheck64 =
+        (_write_index < 16368ULL) ? _write_index : 16368ULL;
+
+    size_t ncheck = static_cast<size_t>(ncheck64);
+
+    uint64_t start =
+        (_write_index > ncheck64) ? (_write_index - ncheck64) : 0;
+
+    for (size_t n = 0; n < ncheck; ++n)
+    {
+        const auto &s =
+            _sample_ring[(start + n) % _ring_capacity];
+
+        switch (s.q)
+        {
+        case -3:
+            q_m3++;
+            break;
+        case -1:
+            q_m1++;
+            break;
+        case 1:
+            q_p1++;
+            break;
+        case 3:
+            q_p3++;
+            break;
+        }
+    }
+
+    int q_total =
+        q_m3 + q_m1 + q_p1 + q_p3;
+
+    int q_max = q_m3;
+    if (q_m1 > q_max)
+        q_max = q_m1;
+    if (q_p1 > q_max)
+        q_max = q_p1;
+    if (q_p3 > q_max)
+        q_max = q_p3;
+
+    float dominance =
+        (q_total > 0)
+            ? ((float)q_max / (float)q_total)
+            : 1.0f;
+
+    bool this_window_complex =
+        (dominance < 0.995f);
+
+    if (this_window_complex)
+        _complex_votes++;
+    else
+        _real_votes++;
+
+    _mode_checks++;
+
+    /*
+    printf("[INPUT CHECK] %d complex=%d real=%d dom=%.3f\n",
+           _mode_checks,
+           _complex_votes,
+           _real_votes,
+           dominance); */
+
+    if (_mode_checks >= 5)
+    {
+        _input_is_complex =
+            (_complex_votes > _real_votes);
+
+        _input_mode_checked = true;
+
+        if (!_input_is_complex)
+        {
+            for (size_t n = 0; n < _ring_capacity; ++n)
+                _sample_ring[n].q = 0;
+        }
+
+        printf("[INPUT FINAL] %s "
+               "(complex=%d real=%d)\n",
+               _input_is_complex ? "Complex I/Q" : "Real IF",
+               _complex_votes,
+               _real_votes);
+    }
+
+    if (!_input_is_complex)
+    {
+        for (size_t n = 0; n < _ring_capacity; ++n)
+        {
+            _sample_ring[n].q = 0;
+        }
+    }
+
+    /*
+    printf("[INPUT] %s\n",
+           _input_is_complex
+               ? "Complex I/Q"
+               : "Real IF");*/
 }
