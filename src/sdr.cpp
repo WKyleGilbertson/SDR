@@ -244,9 +244,9 @@ int main(int argc, char *argv[])
                             (double)meta.fs_rate,
                             fresh,
                             pcs.getSV(fresh.prn));
-                            
-                            tracking.activeChannels.back()
-                             .processor->setInputIsComplex(rx.input_is_complex());
+
+                        tracking.activeChannels.back()
+                            .processor->setInputIsComplex(rx.input_is_complex());
 
                         for (int phase = 0; phase < 20; ++phase)
                         {
@@ -262,12 +262,13 @@ int main(int argc, char *argv[])
                         state.handover_unix_time = acq_ptr[0].unix_time;
                         state.sampleCursor = fresh_cursor + acq_samples;
 
-                        // Important: add this field to ChannelState next.
-                        uint64_t write = rx.get_write_index();
-                        uint64_t aligned_write = write - (write % ms_samples);
+                        uint64_t fresh_end = fresh_cursor + acq_samples;
 
-                        state.sampleCursor = aligned_write - ms_samples;
-
+                        printf(
+                            "[HANDOFF CHECK] fresh_end=%llu start=%llu delta=%lld samples\n",
+                            (unsigned long long)fresh_end,
+                            (unsigned long long)state.sampleCursor,
+                            (long long)(state.sampleCursor - fresh_end));
                         acq_needed = false;
 
                         printf("[*] HANDOVER SUCCESS: fresh acquisition window [%llu, %llu)\n",
