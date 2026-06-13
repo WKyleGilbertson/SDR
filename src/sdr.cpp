@@ -29,14 +29,14 @@ static bool runFreshFocusedAcquisition(
 {
     uint64_t write = rx.get_write_index();
 
-    uint64_t aligned_write =
-        write - (write % ms_samples);
-
-    if (aligned_write < acq_samples)
+    if (write < acq_samples + ms_samples)
         return false;
 
+    uint64_t latest_complete_ms =
+        write - (write % ms_samples);
+
     fresh_cursor =
-        aligned_write - acq_samples;
+        latest_complete_ms - acq_samples;
 
     RawSample *fresh_ptr = nullptr;
     std::vector<RawSample> fresh_window;
@@ -44,11 +44,42 @@ static bool runFreshFocusedAcquisition(
     if (!rx.get_window(
             fresh_cursor,
             fresh_ptr,
-            acq_samples,
+            (unsigned int)acq_samples,
             fresh_window))
     {
         return false;
     }
+
+    uint32_t mod =
+        fresh_ptr[0].sample_tick %
+        (uint32_t)ms_samples;
+
+    if (mod != 0)
+    {
+        if (fresh_cursor < mod)
+            return false;
+
+        fresh_cursor -= mod;
+
+        if (!rx.get_window(
+                fresh_cursor,
+                fresh_ptr,
+                (unsigned int)acq_samples,
+                fresh_window))
+        {
+            return false;
+        }
+
+        mod =
+            fresh_ptr[0].sample_tick %
+            (uint32_t)ms_samples;
+    }
+
+    printf("[FRESH WIN] cursor=%llu tick=%u mod=%u samples=%zu\n",
+           (unsigned long long)fresh_cursor,
+           fresh_ptr[0].sample_tick,
+           mod,
+           acq_samples);
 
     auto t0 =
         std::chrono::high_resolution_clock::now();
@@ -218,6 +249,11 @@ int main(int argc, char *argv[])
                                    res.prn, res.snr, res.bin, res.codePhase);
                         }
                     }
+  printf("[SURVEY WIN] cursor=%llu tick=%u mod=%u samples=%zu\n",
+       (unsigned long long)acq_cursor,
+       acq_ptr[0].sample_tick,
+       acq_ptr[0].sample_tick % (uint32_t)ms_samples,
+       acq_samples);                  
 
                     if (focusTarget != nullptr)
                     {
