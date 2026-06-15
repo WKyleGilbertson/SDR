@@ -77,8 +77,16 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     _sampleCounter = 0;
     _prevCodePhase = 0;
     _msIntegrated = 0;
+    /*
     _initialCodePhase = init.codePhase;
-    _continuousTrackedChips = init.codePhase;
+    */
+   _initialCodePhase = init.codePhase + DEBUG_CODE_PHASE_SHIM;
+
+while (_initialCodePhase < 0.0f)
+    _initialCodePhase += 1023.0f;
+
+while (_initialCodePhase >= 1023.0f)
+    _initialCodePhase -= 1023.0f;
 
     for (int i = 0; i < 20; ++i)
     {
@@ -91,24 +99,26 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     _codeNco.RakeSpacing(CorrelatorSpacing::halfChip);
 
     float spc = (float)_fs / 1023000.0f;
-    // int chipTravelDelay = 0;
-    int chipTravelDelay = (int)std::round(32.0f / spc);
-    _initialCodePhase = init.codePhase;
+     int chipTravelDelay = 0;
+    //int chipTravelDelay = (int)std::round(32.0f / spc);
 
     _continuousTrackedChips = _initialCodePhase;
     _absoluteBaseRotations = 0;
     _codeNco.InitializeEPLPipeline(_initialCodePhase, chipTravelDelay);
 
     /* Debug*/
-    printf(
-        "[CHAN INIT] PRN %d acqCode=%.4f initCode=%.4f ncoCode=%.4f rot=%u fine=%u delay=%d\n",
-        _prn,
-        init.codePhase,
-        _initialCodePhase,
-        _codeNco.getCodePhase(),
-        _codeNco.getRotations(),
-        _codeNco.getFinePhase16(),
-        chipTravelDelay);
+printf(
+    "[CHAN INIT DETAIL] "
+    "acq=%.4f nco=%.4f rot=%u fine=%u "
+    "E=%d P=%d L=%d delay=%d\n",
+    init.codePhase,
+    _codeNco.getCodePhase(),
+    _codeNco.getRotations(),
+    _codeNco.getFinePhase16(),
+    _codeNco.Early,
+    _codeNco.Prompt,
+    _codeNco.Late,
+    chipTravelDelay);
     /* End Debug*/
 
     //_currentCommandedFreq = _oldCarrNco;
@@ -182,7 +192,7 @@ void ChannelProcessor::runAccumulation(
         {
             // Real IF: sample * local oscillator
             bb_i = (int16_t)(in_i * c);
-            bb_q = (int16_t)(in_i * s);
+            bb_q = (int16_t)(-in_i * s);
         }
 
         _acc.Ei += (bb_i * _codeNco.Early);

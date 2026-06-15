@@ -168,6 +168,23 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
             float peakI = (float)m_workspace[peakIndex].i;
             // atan2 returns radians (-pi to pi)
             float phase = std::atan2f(peakI, peakR);
+            
+    float codePhaseA =
+        (float)peakIndex / 16.0f;
+
+    float codePhaseB =
+        (float)((16368 - peakIndex) % 16368) / 16.0f;
+
+    printf(
+        "[PCS PEAK] PRN=%d bin=%d peak=%d "
+        "A=%.4f B=%.4f SNR=%.1f\n",
+        prn,
+        bin,
+        peakIndex,
+        codePhaseA,
+        codePhaseB,
+        snr);
+
             // 2. Update bestResult assignment
             bestResult.bin = bin;
             bestResult.peakIndex = peakIndex;

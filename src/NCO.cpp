@@ -141,4 +141,34 @@ void NCO::InitializeEPLPipeline(float initialCodePhase, int chipTravelDelay)
 
         EPLreg |= (static_cast<uint64_t>(CACODE[chip_idx]) & 0x01ULL) << i;
     }
+
+        // ---- DEBUG ----
+
+    int bit0_chip =
+        (int)m_rotations - chipTravelDelay - 32;
+
+    int bit32_chip =
+        (int)m_rotations - chipTravelDelay;
+
+    int bit63_chip =
+        (int)m_rotations - chipTravelDelay + 31;
+
+    while (bit0_chip < 0)
+        bit0_chip += 1023;
+
+    while (bit32_chip < 0)
+        bit32_chip += 1023;
+
+    while (bit63_chip < 0)
+        bit63_chip += 1023;
+
+    printf(
+        "[EPL INIT] code=%.4f rot=%u delay=%d "
+        "bit0=%d bit32=%d bit63=%d\n",
+        initialCodePhase,
+        m_rotations,
+        chipTravelDelay,
+        bit0_chip % 1023,
+        bit32_chip % 1023,
+        bit63_chip % 1023);
 }
