@@ -346,7 +346,9 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
 
     float boundary_code_phase = _codeNco.getCodePhase();
 
+    // 1. Reduce signal to BaseBand
     runAccumulation(samples, availableSamples, res);
+    // 2. Find Tracking Errors
     TrackingMetrics m = computeDiscriminators(availableSamples);
 
     res.symbol = (m.I > 0) ? 1 : -1;
