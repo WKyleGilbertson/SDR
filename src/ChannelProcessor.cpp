@@ -448,6 +448,9 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
         updateCarrierLoop(m);
         updateCodeLoop(m);
     }
+
+    fillResult(res, m, boundary_code_phase);
+
     resetAccumulators(_acc);
     return res;
 }
