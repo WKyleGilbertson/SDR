@@ -109,6 +109,9 @@ private:
         size_t availableSamples,
         CorrelatorResult &res);
 
+    void harvestEpochResult( CorrelatorResult &res, const RawSample &sample,
+    size_t offset_samples);
+
     TrackingMetrics computeDiscriminators(
         size_t availableSamples);
 
