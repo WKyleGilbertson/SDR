@@ -10,7 +10,8 @@
 #include "L1IFUtil.hpp"  // Has the bit unpacking
 #include "PCSEngine.hpp" // This defines AcqResult
 
-struct EpochResult{
+struct EpochResult
+{
     int32_t Ei;
     int32_t Eq;
     int32_t Pi;
@@ -61,6 +62,32 @@ struct Accumulators
     int32_t Ei, Eq, Pi, Pq, Li, Lq, SEi, SEq, SLi, SLq;
 };
 
+struct TrackingMetrics
+{
+    float I = 0.0f;
+    float Q = 0.0f;
+
+    float Early_I = 0.0f;
+    float Early_Q = 0.0f;
+    float Prompt_I = 0.0f;
+    float Prompt_Q = 0.0f;
+    float Late_I = 0.0f;
+    float Late_Q = 0.0f;
+
+    float E = 0.0f;
+    float P = 0.0f;
+    float L = 0.0f;
+
+    float E2 = 0.0f;
+    float P2 = 0.0f;
+    float L2 = 0.0f;
+
+    float carrError = 0.0f;
+    float codeError = 0.0f;
+
+    float dynamicT = 0.001f;
+};
+
 class ChannelProcessor
 {
 public:
@@ -74,9 +101,27 @@ public:
     int getPRN() const { return _prn; }
     bool isLocked() const { return _isLocked; }
     float getSNR() const { return (float)_snr; }
-    void setInputIsComplex(bool is_complex) { _input_is_complex = is_complex;}
+    void setInputIsComplex(bool is_complex) { _input_is_complex = is_complex; }
 
 private:
+    void runAccumulation(
+        const RawSample *samples,
+        size_t availableSamples,
+        CorrelatorResult &res);
+
+    TrackingMetrics computeDiscriminators(
+        size_t availableSamples);
+
+    void updateCarrierLoop(
+        const TrackingMetrics &m);
+
+    void updateCodeLoop(
+        const TrackingMetrics &m);
+
+    void fillResult(
+        CorrelatorResult &res,
+        const TrackingMetrics &m,
+        float boundary_code_phase);
     NCO _carrNco; // Carrier NCO (Initial ~4.092 MHz)
     NCO _codeNco; // Code NCO (Initial ~1.023 MHz)
     G2INIT _m_sv;
@@ -84,7 +129,7 @@ private:
     uint8_t _msIntegrated = 0;
     uint16_t _epochSampleCounter = 0;
     uint64_t _absoluteBaseRotations = 0;
-//    float _sampleFractionAccumulator = 0.0;
+    //    float _sampleFractionAccumulator = 0.0;
     float _continuousTrackedChips = 0.0;
     // Loop Filter State from TrkBST.cpp
     float _carrFreqBasis;
@@ -97,7 +142,7 @@ private:
     uint32_t _epochSampleCount = 0;
     uint64_t _sampleCounter = 0;
     void resetAccumulators(Accumulators &acc);
-    void ChannelProcessor::calculateSNR(Accumulators &acc, float &snr);
+    void calculateSNR(Accumulators &acc, float &snr);
     // Filter Coefficients
     LoopFilter _codeLF, _carrLF;
     float _fs;
