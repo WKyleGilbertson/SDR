@@ -52,8 +52,17 @@ SDR_OBJS = $(ODIR)/sdr.obj \
            $(ODIR)/PCSEngine.obj \
            $(ODIR)/kiss_fft.obj
 
+TESTBENCH_OBJS = $(ODIR)/testbench.obj \
+                 $(ODIR)/AcquisitionMgr.obj \
+                 $(ODIR)/PCSEngine.obj \
+                 $(ODIR)/ChannelProcessor.obj \
+                 $(ODIR)/NCO.obj \
+                 $(ODIR)/L1IFUtil.obj \
+                 $(ODIR)/g2init.obj \
+                 $(ODIR)/kiss_fft.obj
+
 # -- Targets --
-all: setup sdr collector relay_server
+all: setup sdr collector relay_server testbench
 
 setup:
 	@if not exist $(ODIR) mkdir $(ODIR)
@@ -78,6 +87,9 @@ collector: setup $(ODIR)/collector.obj
 relay_server: setup $(ODIR)/relay_server.obj
 	$(CC) $(ODIR)/relay_server.obj $(LDFLAGS) ws2_32.lib \
 	/OUT:$(BDIR)/relay_server.exe
+
+testbench: setup $(TESTBENCH_OBJS)
+	$(CC) $(TESTBENCH_OBJS) $(LDFLAGS) /OUT:$(BDIR)/testbench.exe
 
 clean:
 	@if exist $(BDIR) rm -f $(BDIR)/*

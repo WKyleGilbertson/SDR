@@ -17,6 +17,8 @@
 #include "TrackingEngine.h"
 #include "NavDecoder.h"
 
+//#define CAPTURE_TRACKING_DATA
+
 static bool runFreshFocusedAcquisition(
     ElasticReceiver &rx,
     AcquisitionMgr &acqMgr,
@@ -249,11 +251,11 @@ int main(int argc, char *argv[])
                                    res.prn, res.snr, res.bin, res.codePhase);
                         }
                     }
-  printf("[SURVEY WIN] cursor=%llu tick=%u mod=%u samples=%zu\n",
-       (unsigned long long)acq_cursor,
-       acq_ptr[0].sample_tick,
-       acq_ptr[0].sample_tick % (uint32_t)ms_samples,
-       acq_samples);                  
+                    printf("[SURVEY WIN] cursor=%llu tick=%u mod=%u samples=%zu\n",
+                           (unsigned long long)acq_cursor,
+                           acq_ptr[0].sample_tick,
+                           acq_ptr[0].sample_tick % (uint32_t)ms_samples,
+                           acq_samples);
 
                     if (focusTarget != nullptr)
                     {
@@ -310,6 +312,24 @@ int main(int argc, char *argv[])
                         printf("[*] HANDOVER SUCCESS: fresh acquisition window [%llu, %llu)\n",
                                fresh_cursor,
                                fresh_cursor + acq_samples);
+
+#ifdef CAPTURE_TRACKING_DATA
+                        char capture_name[64];
+                        snprintf(capture_name,
+                                 sizeof(capture_name),
+                                 "tracking_prn%03d",
+                                 fresh.prn);
+                        tracking.captureReplayPackage(
+                            rx,
+                            meta,
+                            fresh,
+                            fresh_cursor,
+                            ms_samples,
+                            100, // capture 100 ms
+                            rx.input_is_complex(),
+                            capture_name);
+#endif
+
                         auto timing =
                             rx.get_timing_status(
                                 fresh_cursor + acq_samples,

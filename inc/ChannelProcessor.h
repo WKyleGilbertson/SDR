@@ -30,6 +30,10 @@ struct CorrelatorResult
     int prn = 0;
     int32_t Pi = 0;
     int32_t Pq = 0;
+    float E_mag = 0.0f;
+    float P_mag = 0.0f;
+    float L_mag = 0.0f;
+    float code_error = 0.0f;
     float carrier_phase_error = 0.0f;    // Relative error: atanf(Pq / Pi)
     float absolute_carrier_phase = 0.0f; // Total continuous accumulated radians <--- ADD THIS
     float code_phase = 0.0f;
@@ -109,8 +113,8 @@ private:
         size_t availableSamples,
         CorrelatorResult &res);
 
-    void harvestEpochResult( CorrelatorResult &res, const RawSample &sample,
-    size_t offset_samples);
+    void harvestEpochResult(CorrelatorResult &res, const RawSample &sample,
+                            size_t offset_samples);
 
     TrackingMetrics computeDiscriminators(
         size_t availableSamples);

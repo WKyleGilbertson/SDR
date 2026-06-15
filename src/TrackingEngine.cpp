@@ -36,6 +36,80 @@ void TrackingEngine::resetNavAccumulation(ChannelState &state)
   state.epoch_counter = 0;
 }
 
+bool TrackingEngine::captureReplayPackage(
+    ElasticReceiver &rx,
+    const RFE_Header_t &meta,
+    const AcqResult &fresh,
+    uint64_t fresh_cursor,
+    size_t ms_samples,
+    size_t capture_ms,
+    bool input_is_complex,
+    const char *basename)
+{
+    const size_t sample_count =
+        capture_ms * ms_samples;
+
+    RawSample *ptr = nullptr;
+    std::vector<RawSample> window;
+
+    if (!rx.get_window(
+            fresh_cursor,
+            ptr,
+            (unsigned int)sample_count,
+            window))
+    {
+        return false;
+    }
+
+    char raw_name[256];
+    snprintf(raw_name,
+             sizeof(raw_name),
+             "%s.rawsamples",
+             basename);
+
+    FILE *fp = fopen(raw_name, "wb");
+    if (!fp)
+        return false;
+
+    fwrite(window.data(),
+           sizeof(RawSample),
+           window.size(),
+           fp);
+
+    fclose(fp);
+
+    char meta_name[256];
+    snprintf(meta_name,
+             sizeof(meta_name),
+             "%s.meta",
+             basename);
+
+    FILE *mf = fopen(meta_name, "w");
+    if (!mf)
+        return false;
+
+    fprintf(mf, "version=1\n");
+    fprintf(mf, "fs_rate=%u\n", meta.fs_rate);
+    fprintf(mf, "prn=%d\n", fresh.prn);
+    fprintf(mf, "bin=%d\n", fresh.bin);
+    fprintf(mf, "codePhase=%.8f\n", fresh.codePhase);
+    fprintf(mf, "snr=%.3f\n", fresh.snr);
+    fprintf(mf, "input_is_complex=%d\n",
+            input_is_complex ? 1 : 0);
+    fprintf(mf, "capture_ms=%zu\n", capture_ms);
+    fprintf(mf, "sample_count=%zu\n", sample_count);
+    fprintf(mf, "start_cursor=%llu\n",
+            (unsigned long long)fresh_cursor);
+
+    fclose(mf);
+
+    printf("[CAPTURE] %zu samples -> %s\n",
+           window.size(),
+           raw_name);
+
+    return true;
+}
+
 void TrackingEngine::processEpoch(
     ChannelState &state,
     const EpochResult &epoch,

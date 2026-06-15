@@ -328,6 +328,10 @@ void ChannelProcessor::fillResult(
     res.Pq = _acc.Pq;
     res.snr = _snr;
     res.is_locked = _isLocked;
+    res.E_mag = m.E;
+    res.P_mag = m.P;
+    res.L_mag = m.L;
+    res.code_error = m.codeError;
 }
 
 CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t availableSamples)
@@ -356,7 +360,7 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
     res.symbols[0] = res.symbol;
 
     // 3. Update Frequencies
-    static constexpr bool OPEN_LOOP_TEST = true;
+    static constexpr bool OPEN_LOOP_TEST = false;
 
     if (!OPEN_LOOP_TEST)
     {

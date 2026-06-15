@@ -6,6 +6,7 @@
 #include <list>
 #include <memory>
 #include <vector>
+#include <cstddef>
 
 #include "ElasticReceiver.h"
 #include "ChannelProcessor.h"
@@ -57,12 +58,22 @@ public:
     std::list<ChannelState> activeChannels;
     bool step(ElasticReceiver &rx, const RFE_Header_t &meta, uint32_t focusPRN,
               FILE *out, bool &acq_needed);
+    bool captureReplayPackage(
+    ElasticReceiver &rx,
+    const RFE_Header_t &meta,
+    const AcqResult &fresh,
+    uint64_t fresh_cursor,
+    size_t ms_samples,
+    size_t capture_ms,
+    bool input_is_complex,
+    const char *basename);
 
 private:
     void processEpoch(ChannelState &state, const EpochResult &epoch,
                       const RFE_Header_t &meta, FILE *out);
     void resetNavAccumulation(ChannelState &state);
     bool file_logging_enabled = true;
+
     uint64_t logged_ms = 0;
     static constexpr uint64_t max_logged_ms = 250;
     FILE *iq_log = nullptr;
