@@ -108,6 +108,7 @@ public:
     bool isLocked() const { return _isLocked; }
     float getSNR() const { return (float)_snr; }
     void setInputIsComplex(bool is_complex) { _input_is_complex = is_complex; }
+    void setLoopEnables(bool enable_pll, bool enable_dll);
 
 private:
     void runAccumulation(
@@ -168,4 +169,7 @@ private:
     float _snrBufferQ[20];                 // 20 ms tracking window
     int _snrBufferIndex = 0;
     bool _input_is_complex = true;
+    bool _enable_pll = true;
+    bool _enable_dll = true;
+    bool _fixed_nco_debug = false;
 };

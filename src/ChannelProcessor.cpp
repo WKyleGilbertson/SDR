@@ -2,6 +2,11 @@
 #include "ChannelProcessor.h"
 #include <cmath>
 
+void ChannelProcessor::setLoopEnables(bool enable_pll, bool enable_dll) {
+    _enable_pll = enable_pll;
+    _enable_dll = enable_dll;
+}
+
 void ChannelProcessor::resetAccumulators(Accumulators &acc)
 {
     acc.Pi = 0;
@@ -80,13 +85,13 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     /*
     _initialCodePhase = init.codePhase;
     */
-   _initialCodePhase = init.codePhase + DEBUG_CODE_PHASE_SHIM;
+    _initialCodePhase = init.codePhase + DEBUG_CODE_PHASE_SHIM;
 
-while (_initialCodePhase < 0.0f)
-    _initialCodePhase += 1023.0f;
+    while (_initialCodePhase < 0.0f)
+        _initialCodePhase += 1023.0f;
 
-while (_initialCodePhase >= 1023.0f)
-    _initialCodePhase -= 1023.0f;
+    while (_initialCodePhase >= 1023.0f)
+        _initialCodePhase -= 1023.0f;
 
     for (int i = 0; i < 20; ++i)
     {
@@ -99,26 +104,26 @@ while (_initialCodePhase >= 1023.0f)
     _codeNco.RakeSpacing(CorrelatorSpacing::halfChip);
 
     float spc = (float)_fs / 1023000.0f;
-     int chipTravelDelay = 0;
-    //int chipTravelDelay = (int)std::round(32.0f / spc);
+    int chipTravelDelay = 0;
+    // int chipTravelDelay = (int)std::round(32.0f / spc);
 
     _continuousTrackedChips = _initialCodePhase;
     _absoluteBaseRotations = 0;
     _codeNco.InitializeEPLPipeline(_initialCodePhase, chipTravelDelay);
 
     /* Debug*/
-printf(
-    "[CHAN INIT DETAIL] "
-    "acq=%.4f nco=%.4f rot=%u fine=%u "
-    "E=%d P=%d L=%d delay=%d\n",
-    init.codePhase,
-    _codeNco.getCodePhase(),
-    _codeNco.getRotations(),
-    _codeNco.getFinePhase16(),
-    _codeNco.Early,
-    _codeNco.Prompt,
-    _codeNco.Late,
-    chipTravelDelay);
+    printf(
+        "[CHAN INIT DETAIL] "
+        "acq=%.4f nco=%.4f rot=%u fine=%u "
+        "E=%d P=%d L=%d delay=%d\n",
+        init.codePhase,
+        _codeNco.getCodePhase(),
+        _codeNco.getRotations(),
+        _codeNco.getFinePhase16(),
+        _codeNco.Early,
+        _codeNco.Prompt,
+        _codeNco.Late,
+        chipTravelDelay);
     /* End Debug*/
 
     //_currentCommandedFreq = _oldCarrNco;
@@ -145,6 +150,15 @@ printf(
     _codeLF.omega_n = _codeLF.Bn * 8.0f * _codeLF.zeta / (4.0f * _codeLF.zeta * _codeLF.zeta + 1.0f);
     _codeLF.tau1 = _codeLF.gain / (_codeLF.omega_n * _codeLF.omega_n);
     _codeLF.tau2 = 2.0f * _codeLF.zeta / _codeLF.omega_n;
+printf("[CHAN INIT] prn=%d bin=%d acq_code=%.4f shim=%.4f init_code=%.4f carr=%.1f dop=%.1f nco_code=%.4f\n",
+       init.prn,
+       init.bin,
+       init.codePhase,
+       DEBUG_CODE_PHASE_SHIM,
+       _initialCodePhase,
+       _currentCommandedFreq,
+       _doppler_hz,
+       _codeNco.getCodePhase());
 }
 
 void ChannelProcessor::runAccumulation(
@@ -370,12 +384,11 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
     res.symbols[0] = res.symbol;
 
     // 3. Update Frequencies
-    static constexpr bool OPEN_LOOP_TEST = false;
-
-    if (!OPEN_LOOP_TEST)
-    {
-        updateCarrierLoop(m);
-        updateCodeLoop(m);
+    if (_enable_pll) {
+    updateCarrierLoop(m);
+    }
+    if (_enable_dll) {
+    updateCodeLoop(m);
     }
 
     fillResult(res, m, boundary_code_phase);

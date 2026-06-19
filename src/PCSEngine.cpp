@@ -178,12 +178,7 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
     printf(
         "[PCS PEAK] PRN=%d bin=%d peak=%d "
         "A=%.4f B=%.4f SNR=%.1f\n",
-        prn,
-        bin,
-        peakIndex,
-        codePhaseA,
-        codePhaseB,
-        snr);
+        prn, bin, peakIndex, codePhaseA, codePhaseB, snr);
 
             // 2. Update bestResult assignment
             bestResult.bin = bin;
@@ -191,7 +186,7 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
             bestResult.peakMagnitude = maxMag;
             bestResult.snr = snr;
             bestResult.phase = phase;
-        }
+        }  
     }
     return bestResult;
 }

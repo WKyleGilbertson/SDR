@@ -476,6 +476,7 @@ bool TrackingEngine::step(
 
       state.last_logged_sample_index = this_index;
 
+      state.processor->setLoopEnables(true, true);
       CorrelatorResult res = state.processor->Correlator(ms_ptr, feed_samples);
 
       did_work = true;
