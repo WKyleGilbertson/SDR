@@ -2,7 +2,8 @@
 #include "ChannelProcessor.h"
 #include <cmath>
 
-void ChannelProcessor::setLoopEnables(bool enable_pll, bool enable_dll) {
+void ChannelProcessor::setLoopEnables(bool enable_pll, bool enable_dll)
+{
     _enable_pll = enable_pll;
     _enable_dll = enable_dll;
 }
@@ -150,15 +151,15 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     _codeLF.omega_n = _codeLF.Bn * 8.0f * _codeLF.zeta / (4.0f * _codeLF.zeta * _codeLF.zeta + 1.0f);
     _codeLF.tau1 = _codeLF.gain / (_codeLF.omega_n * _codeLF.omega_n);
     _codeLF.tau2 = 2.0f * _codeLF.zeta / _codeLF.omega_n;
-printf("[CHAN INIT] prn=%d bin=%d acq_code=%.4f shim=%.4f init_code=%.4f carr=%.1f dop=%.1f nco_code=%.4f\n",
-       init.prn,
-       init.bin,
-       init.codePhase,
-       DEBUG_CODE_PHASE_SHIM,
-       _initialCodePhase,
-       _currentCommandedFreq,
-       _doppler_hz,
-       _codeNco.getCodePhase());
+    printf("[CHAN INIT] prn=%d bin=%d acq_code=%.4f shim=%.4f init_code=%.4f carr=%.1f dop=%.1f nco_code=%.4f\n",
+           init.prn,
+           init.bin,
+           init.codePhase,
+           DEBUG_CODE_PHASE_SHIM,
+           _initialCodePhase,
+           _currentCommandedFreq,
+           _doppler_hz,
+           _codeNco.getCodePhase());
 }
 
 void ChannelProcessor::runAccumulation(
@@ -228,6 +229,10 @@ void ChannelProcessor::runAccumulation(
         {
             TrackingMetrics m =
                 computeEpochDiscriminators(_epochAcc, _epochSampleCount);
+            if (_enable_pll)
+                updateCarrierLoop(m);
+            if (_enable_dll)
+                updateCodeLoop(m);
             harvestEpochResult(res, samples[i], i);
             fillResult(res, m, _codeNco.getCodePhase());
         }
@@ -268,8 +273,8 @@ void ChannelProcessor::harvestEpochResult(
     res.epoch_sample_count = _epochSampleCount;
 
     TrackingMetrics em =
-    computeEpochDiscriminators(_epochAcc,
-                               _epochSampleCount);
+        computeEpochDiscriminators(_epochAcc,
+                                   _epochSampleCount);
 
     resetAccumulators(_epochAcc);
     _epochSampleCount = 0;
@@ -327,7 +332,8 @@ TrackingMetrics ChannelProcessor::computeDiscriminators(
 }
 
 TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
-        const Accumulators& acc, size_t sampleCount) {
+    const Accumulators &acc, size_t sampleCount)
+{
     TrackingMetrics m = {};
 
     float norm = 1.0f / (float)sampleCount;
@@ -369,7 +375,7 @@ TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
             ? ((m.E2 - m.L2) / (m.E2 + m.L2))
             : 0.0f;
 
-    calculateSNR((Accumulators&)acc, _snr);
+    calculateSNR((Accumulators &)acc, _snr);
     _isLocked =
         (_snr > 12.0f);
 
@@ -439,22 +445,13 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
 
     // 1. Reduce signal to BaseBand
     runAccumulation(samples, availableSamples, res);
-    // 2. Find Tracking Errors
-    TrackingMetrics m = computeDiscriminators(availableSamples);
+    // 2. Find Tracking Errors Moved to runAccmulation
 
-    res.symbol = (m.I > 0) ? 1 : -1;
+    res.symbol = (res.Pi > 0) ? 1 : -1;
     res.numSymbols = 1;
     res.symbols[0] = res.symbol;
-
-    // 3. Update Frequencies
-    if (_enable_pll) {
-    updateCarrierLoop(m);
-    }
-    if (_enable_dll) {
-    updateCodeLoop(m);
-    }
-
-//    fillResult(res, m, boundary_code_phase);
+    // 3. Update Frequencies Moved to runAccumulation
+    // 4. FillResult() moved to runAccumulation
 
     resetAccumulators(_acc);
     return res;
