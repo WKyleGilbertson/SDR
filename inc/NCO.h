@@ -33,7 +33,8 @@ public:
     void setPhase(uint32_t p) { m_phase = p; }
     void InitializeEPLPipeline(float initialCodePhase, int chipTravelDelay);
 private:
-    const float m_ONE_ROTATION = (float) 2.0 * (1u << 31);
+    //const float m_ONE_ROTATION = (float) 2.0 * (1u << 31);
+    static constexpr double m_ONE_ROTATION = 4294967296.0;
     uint32_t m_lglen, m_len, m_mask, m_phase, m_dphase, m_bias, idx;
     uint16_t m_rotations = 0;
     uint64_t EPLreg = 0ULL;

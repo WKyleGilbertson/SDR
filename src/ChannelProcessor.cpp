@@ -1,4 +1,5 @@
 // #define DEBUG_ROLLOVER
+#define DEBUG_CODE_STEP
 #include "ChannelProcessor.h"
 #include <cmath>
 
@@ -174,10 +175,80 @@ void ChannelProcessor::runAccumulation(
     {
         _sampleCounter++;
 
-        uint32_t carrIdx = _carrNco.clk();
+//        uint32_t carrIdx = _carrNco.clk();
         uint16_t prev_rotations = _codeNco.getRotations();
         float prev_code_phase = _codeNco.getCodePhase();
+
+        uint32_t carrIdx = _carrNco.getPhase() >> (32 -8);
+
+//        _codeNco.clk();
+
+        float s = _carrNco.sine(carrIdx);
+        float c = _carrNco.cosine(carrIdx);
+        // int16_t s = (int16_t)(_carrNco.sine(carrIdx) * 127.0f);
+        // int16_t c = (int16_t)(_carrNco.cosine(carrIdx) * 127.0f);
+        int16_t in_i = samples[i].i;
+        int16_t in_q = samples[i].q;
+        float bb_i = 0.0f;
+        float bb_q = 0.0f;
+        // int16_t bb_i = 0;
+        // int16_t bb_q = 0;
+
+        if (_input_is_complex)
+        {
+            // (I + jQ) * (cos - j sin)
+            bb_i = (float)(in_i * c + in_q * s);
+            bb_q = (float)(in_q * c - in_i * s);
+            // bb_i = (int16_t)(in_i * c + in_q * s);
+            // bb_q = (int16_t)(in_q * c - in_i * s);
+        }
+        else
+        {
+            // Real IF: sample * local oscillator
+            bb_i = (float)(in_i * c);
+            bb_q = -(float)(in_i * s);
+            // bb_i = (int16_t)(in_i * c);
+            // bb_q = (int16_t)(-in_i * s);
+        }
+
+        _epochAcc.Ei += (int32_t)(bb_i * _codeNco.Early);
+        _epochAcc.Eq += (int32_t)(bb_q * _codeNco.Early);
+        _epochAcc.Pi += (int32_t)(bb_i * _codeNco.Prompt);
+        _epochAcc.Pq += (int32_t)(bb_q * _codeNco.Prompt);
+        _epochAcc.Li += (int32_t)(bb_i * _codeNco.Late);
+        _epochAcc.Lq += (int32_t)(bb_q * _codeNco.Late);
+
+        _epochSampleCount++;
+
+        _carrNco.clk();
         _codeNco.clk();
+
+#ifdef DEBUG_CODE_STEP
+        static uint64_t last_chip_sample = 0;
+        static uint16_t last_rot = 0;
+        static int print_count = 0;
+
+        uint16_t curr_rot = _codeNco.getRotations();
+
+        if (curr_rot != last_rot)
+        {
+            uint64_t delta = _sampleCounter - last_chip_sample;
+
+            if (print_count < 200)
+            {
+                printf("[CODE STEP] sample=%llu rot=%u delta=%llu phase=%.6f P=%d\n",
+                       (unsigned long long)_sampleCounter,
+                       curr_rot,
+                       (unsigned long long)delta,
+                       _codeNco.getCodePhase(),
+                       _codeNco.Prompt);
+                print_count++;
+            }
+
+            last_chip_sample = _sampleCounter;
+            last_rot = curr_rot;
+        }
+#endif
 
 #ifdef DEBUG_ROLLOVER
         uint16_t curr_rot = _codeNco.getRotations();
@@ -192,43 +263,6 @@ void ChannelProcessor::runAccumulation(
             }
         }
 #endif
-
-        float s = _carrNco.sine(carrIdx);
-        float c = _carrNco.cosine(carrIdx);
-        //int16_t s = (int16_t)(_carrNco.sine(carrIdx) * 127.0f);
-        //int16_t c = (int16_t)(_carrNco.cosine(carrIdx) * 127.0f);
-        int16_t in_i = samples[i].i;
-        int16_t in_q = samples[i].q;
-        float bb_i = 0.0f;
-        float bb_q = 0.0f;
-        //int16_t bb_i = 0;
-        //int16_t bb_q = 0;
-
-        if (_input_is_complex)
-        {
-            // (I + jQ) * (cos - j sin)
-            bb_i = (float)(in_i * c + in_q * s);
-            bb_q = (float)(in_q * c - in_i * s);
-            //bb_i = (int16_t)(in_i * c + in_q * s);
-            //bb_q = (int16_t)(in_q * c - in_i * s);
-        }
-        else
-        {
-            // Real IF: sample * local oscillator
-            bb_i = (float)(in_i * c);
-            bb_q = -(float)(in_i * s);
-            //bb_i = (int16_t)(in_i * c);
-            //bb_q = (int16_t)(-in_i * s);
-        }
-
-        _epochAcc.Ei += (int32_t)(bb_i * _codeNco.Early);
-        _epochAcc.Eq += (int32_t)(bb_q * _codeNco.Early);
-        _epochAcc.Pi += (int32_t)(bb_i * _codeNco.Prompt);
-        _epochAcc.Pq += (int32_t)(bb_q * _codeNco.Prompt);
-        _epochAcc.Li += (int32_t)(bb_i * _codeNco.Late);
-        _epochAcc.Lq += (int32_t)(bb_q * _codeNco.Late);
-
-        _epochSampleCount++;
 
         if (_codeNco.getRotations() < prev_rotations)
         {
@@ -303,17 +337,17 @@ TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
     m.Late_Q = (float)acc.Lq * norm;
     m.dynamicT = (float)sampleCount / (float)_fs;
     m.P2 = m.I * m.I + m.Q * m.Q;
-//    float sign_I = (m.I >= 0.0f) ? 1.0f : -1.0f;
-//    float clean_I = m.I * sign_I;
-//    float clean_Q = m.Q * sign_I;
+    //    float sign_I = (m.I >= 0.0f) ? 1.0f : -1.0f;
+    //    float clean_I = m.I * sign_I;
+    //    float clean_Q = m.Q * sign_I;
     float raw_angular_error =
-    (fabsf(m.I) > 1e-6f)
-        ? atanf(m.Q / m.I)
-        : 0.0f;
-        /*
-        (clean_I > 1e-6f)
-            ? atanf(clean_Q / clean_I)
-            : 0.0f; */
+        (fabsf(m.I) > 1e-6f)
+            ? atanf(m.Q / m.I)
+            : 0.0f;
+    /*
+    (clean_I > 1e-6f)
+        ? atanf(clean_Q / clean_I)
+        : 0.0f; */
 
     m.carrError = raw_angular_error / (2.0f * (float)M_PI);
 
@@ -351,7 +385,7 @@ void ChannelProcessor::updateCarrierLoop(
     _oldCarrError = m.carrError;
     _currentCommandedFreq = _carrFreqBasis - carrNcoUpdate;
     _carrNco.SetFrequency(_currentCommandedFreq);
-    _doppler_hz = _currentCommandedFreq - 4.092e6f; 
+    _doppler_hz = _currentCommandedFreq - 4.092e6f;
 }
 
 void ChannelProcessor::updateCodeLoop(

@@ -5,7 +5,7 @@
 
 NCO::NCO(const int lgtblsize, const float m_sample_clk)
 {
-    //SAMPLE_RATE = m_sample_clk;
+    // SAMPLE_RATE = m_sample_clk;
     this->m_sample_clk = m_sample_clk;
     // We'll use a table 2^(lgtblize) in length.  This is non-negotiable, as the
     // rest of this algorithm depends upon this property.
@@ -42,10 +42,8 @@ NCO::~NCO(void)
 
 void NCO::SetFrequency(float f)
 {
-     // Cast explicitly to uint32_t to match the class property definition
-//    m_dphase = (uint32_t)(f * 4294967296.0f / m_sample_clk);   
-    //m_dphase = static_cast<uint32_t>((double)f * m_ONE_ROTATION / m_sample_clk);
-    m_dphase = (int32_t)(f * m_ONE_ROTATION / m_sample_clk);
+    // Cast explicitly to uint32_t to match the class property definition
+    m_dphase = (uint32_t)((double)f * 4294967296.0 / (double)m_sample_clk);
     m_frequency = f;
 }
 
@@ -91,34 +89,28 @@ void NCO::LoadCACODE(uint8_t *CODE)
 
 uint32_t NCO::clk(void)
 {
-    uint32_t index;
+    uint32_t index = 0;
+    uint32_t old_phase = m_phase;
+    m_phase += m_dphase;
 
-    // 1. Advance Phase and check for Code Chip rollover
-    if (m_phase + m_dphase < m_phase)
+    if (m_phase < old_phase)
     {
         m_rotations++;
         if (m_rotations >= 1023)
             m_rotations = 0;
     }
 
-    // 2. Update the Shift Register with current Gold Code chip
     EPLreg <<= 1;
     EPLreg |= (static_cast<uint64_t>(CACODE[m_rotations]) & 0x01ULL);
 
-    // 3. Extract Correlator Pipeline Masks
     Early = ((EPLreg & E_mask) != 0) ? 1 : -1;
     Prompt = ((EPLreg & P_mask) != 0) ? 1 : -1;
     Late = ((EPLreg & L_mask) != 0) ? 1 : -1;
     superEarly = ((EPLreg & SE_mask) != 0) ? 1 : -1;
     superLate = ((EPLreg & SL_mask) != 0) ? 1 : -1;
 
-    // 4. Update phase accumulator for Carrier/Table lookup
-    m_phase += m_dphase;
-
-    // Generate index for Sine/Cosine LUT (Carrier NCO execution path only)
     index = m_phase >> (32 - m_lglen);
     idx = index & m_mask;
-
     return idx;
 }
 
@@ -142,7 +134,7 @@ void NCO::InitializeEPLPipeline(float initialCodePhase, int chipTravelDelay)
         EPLreg |= (static_cast<uint64_t>(CACODE[chip_idx]) & 0x01ULL) << i;
     }
 
-        // ---- DEBUG ----
+    // ---- DEBUG ----
 
     int bit0_chip =
         (int)m_rotations - chipTravelDelay - 32;
