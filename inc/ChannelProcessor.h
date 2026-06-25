@@ -126,9 +126,6 @@ private:
     void harvestEpochResult(CorrelatorResult &res, const RawSample &sample,
                             size_t offset_samples);
 
-    TrackingMetrics computeDiscriminators(
-        size_t availableSamples);
-
     TrackingMetrics computeEpochDiscriminators(
         const Accumulators& acc, size_t sampleCount);
 

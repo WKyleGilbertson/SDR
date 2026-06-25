@@ -137,15 +137,18 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     for (int i = 0; i < 1023; i++)
         _ca_replica[i] = (int8_t)_m_sv.CODE[i];
 
-    _carrLF.Bn = 10.0f;
+    //_carrLF.Bn = 10.0f;
     //_carrLF.Bn = 25.0f;
+    _carrLF.Bn = 40.0f;
     _carrLF.zeta = 0.707f;
+    //_carrLF.gain = 0.60f;
     _carrLF.gain = 1.0f;
     _carrLF.omega_n = _carrLF.Bn * 8.0f * _carrLF.zeta / (4.0f * _carrLF.zeta * _carrLF.zeta + 1.0f);
     _carrLF.tau1 = _carrLF.gain / (_carrLF.omega_n * _carrLF.omega_n);
     _carrLF.tau2 = 2.0f * _carrLF.zeta / _carrLF.omega_n;
 
-    _codeLF.Bn = 1.0f;
+    _codeLF.Bn = 20.0f;
+    //_codeLF.Bn = 1.0f;
     _codeLF.zeta = 0.707f;
     _codeLF.gain = 1.0f;
     _codeLF.omega_n = _codeLF.Bn * 8.0f * _codeLF.zeta / (4.0f * _codeLF.zeta * _codeLF.zeta + 1.0f);
@@ -190,38 +193,40 @@ void ChannelProcessor::runAccumulation(
         }
 #endif
 
-        int16_t s = (int16_t)(_carrNco.sine(carrIdx) * 127.0f);
-        int16_t c = (int16_t)(_carrNco.cosine(carrIdx) * 127.0f);
+        float s = _carrNco.sine(carrIdx);
+        float c = _carrNco.cosine(carrIdx);
+        //int16_t s = (int16_t)(_carrNco.sine(carrIdx) * 127.0f);
+        //int16_t c = (int16_t)(_carrNco.cosine(carrIdx) * 127.0f);
         int16_t in_i = samples[i].i;
         int16_t in_q = samples[i].q;
-        int16_t bb_i = 0;
-        int16_t bb_q = 0;
+        float bb_i = 0.0f;
+        float bb_q = 0.0f;
+        //int16_t bb_i = 0;
+        //int16_t bb_q = 0;
 
         if (_input_is_complex)
         {
             // (I + jQ) * (cos - j sin)
-            bb_i = (int16_t)(in_i * c + in_q * s);
-            bb_q = (int16_t)(in_q * c - in_i * s);
+            bb_i = (float)(in_i * c + in_q * s);
+            bb_q = (float)(in_q * c - in_i * s);
+            //bb_i = (int16_t)(in_i * c + in_q * s);
+            //bb_q = (int16_t)(in_q * c - in_i * s);
         }
         else
         {
             // Real IF: sample * local oscillator
-            bb_i = (int16_t)(in_i * c);
-            bb_q = (int16_t)(-in_i * s);
+            bb_i = (float)(in_i * c);
+            bb_q = -(float)(in_i * s);
+            //bb_i = (int16_t)(in_i * c);
+            //bb_q = (int16_t)(-in_i * s);
         }
 
-        _acc.Ei += (bb_i * _codeNco.Early);
-        _acc.Eq += (bb_q * _codeNco.Early);
-        _acc.Pi += (bb_i * _codeNco.Prompt);
-        _acc.Pq += (bb_q * _codeNco.Prompt);
-        _acc.Li += (bb_i * _codeNco.Late);
-        _acc.Lq += (bb_q * _codeNco.Late);
-        _epochAcc.Ei += (bb_i * _codeNco.Early);
-        _epochAcc.Eq += (bb_q * _codeNco.Early);
-        _epochAcc.Pi += (bb_i * _codeNco.Prompt);
-        _epochAcc.Pq += (bb_q * _codeNco.Prompt);
-        _epochAcc.Li += (bb_i * _codeNco.Late);
-        _epochAcc.Lq += (bb_q * _codeNco.Late);
+        _epochAcc.Ei += (int32_t)(bb_i * _codeNco.Early);
+        _epochAcc.Eq += (int32_t)(bb_q * _codeNco.Early);
+        _epochAcc.Pi += (int32_t)(bb_i * _codeNco.Prompt);
+        _epochAcc.Pq += (int32_t)(bb_q * _codeNco.Prompt);
+        _epochAcc.Li += (int32_t)(bb_i * _codeNco.Late);
+        _epochAcc.Lq += (int32_t)(bb_q * _codeNco.Late);
 
         _epochSampleCount++;
 
@@ -229,12 +234,12 @@ void ChannelProcessor::runAccumulation(
         {
             TrackingMetrics m =
                 computeEpochDiscriminators(_epochAcc, _epochSampleCount);
+            harvestEpochResult(res, samples[i], i);
+            fillResult(res, m, _codeNco.getCodePhase());
             if (_enable_pll)
                 updateCarrierLoop(m);
             if (_enable_dll)
                 updateCodeLoop(m);
-            harvestEpochResult(res, samples[i], i);
-            fillResult(res, m, _codeNco.getCodePhase());
         }
     }
 }
@@ -280,57 +285,6 @@ void ChannelProcessor::harvestEpochResult(
     _epochSampleCount = 0;
 }
 
-TrackingMetrics ChannelProcessor::computeDiscriminators(
-    size_t availableSamples)
-{
-    TrackingMetrics m = {};
-
-    float norm = 1.0f / (float)availableSamples;
-
-    m.I = (float)_acc.Pi * norm;
-    m.Q = (float)_acc.Pq * norm;
-
-    m.Early_I = (float)_acc.Ei * norm;
-    m.Early_Q = (float)_acc.Eq * norm;
-    m.Prompt_I = m.I;
-    m.Prompt_Q = m.Q;
-    m.Late_I = (float)_acc.Li * norm;
-    m.Late_Q = (float)_acc.Lq * norm;
-    m.dynamicT = (float)availableSamples / (float)_fs;
-    m.P2 = m.I * m.I + m.Q * m.Q;
-    float sign_I = (m.I >= 0.0f) ? 1.0f : -1.0f;
-    float clean_I = m.I * sign_I;
-    float clean_Q = m.Q * sign_I;
-    float raw_angular_error =
-        (clean_I > 1e-6f)
-            ? atanf(clean_Q / clean_I)
-            : 0.0f;
-
-    m.carrError = raw_angular_error / (2.0f * (float)M_PI);
-
-    if (fabs(m.carrError - _oldCarrError) > 0.5f)
-    {
-        m.carrError = _oldCarrError + (m.carrError * 0.1f);
-    }
-
-    m.E2 = m.Early_I * m.Early_I + m.Early_Q * m.Early_Q;
-    m.L2 = m.Late_I * m.Late_I + m.Late_Q * m.Late_Q;
-    m.E = sqrtf(m.E2);
-    m.P = sqrtf(m.P2);
-    m.L = sqrtf(m.L2);
-
-    m.codeError =
-        ((m.E2 + m.L2) > 1e-6f)
-            ? ((m.E2 - m.L2) / (m.E2 + m.L2))
-            : 0.0f;
-
-    calculateSNR(_acc, _snr);
-    _isLocked =
-        (_snr > 12.0f);
-
-    return m;
-}
-
 TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
     const Accumulators &acc, size_t sampleCount)
 {
@@ -349,13 +303,17 @@ TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
     m.Late_Q = (float)acc.Lq * norm;
     m.dynamicT = (float)sampleCount / (float)_fs;
     m.P2 = m.I * m.I + m.Q * m.Q;
-    float sign_I = (m.I >= 0.0f) ? 1.0f : -1.0f;
-    float clean_I = m.I * sign_I;
-    float clean_Q = m.Q * sign_I;
+//    float sign_I = (m.I >= 0.0f) ? 1.0f : -1.0f;
+//    float clean_I = m.I * sign_I;
+//    float clean_Q = m.Q * sign_I;
     float raw_angular_error =
+    (fabsf(m.I) > 1e-6f)
+        ? atanf(m.Q / m.I)
+        : 0.0f;
+        /*
         (clean_I > 1e-6f)
             ? atanf(clean_Q / clean_I)
-            : 0.0f;
+            : 0.0f; */
 
     m.carrError = raw_angular_error / (2.0f * (float)M_PI);
 
@@ -385,6 +343,7 @@ TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
 void ChannelProcessor::updateCarrierLoop(
     const TrackingMetrics &m)
 {
+
     float carrNcoUpdate = _oldCarrNco + (_carrLF.tau2 / _carrLF.tau1) *
                                             (m.carrError - _oldCarrError) *
                                             (m.dynamicT / _carrLF.tau1);
@@ -392,7 +351,7 @@ void ChannelProcessor::updateCarrierLoop(
     _oldCarrError = m.carrError;
     _currentCommandedFreq = _carrFreqBasis - carrNcoUpdate;
     _carrNco.SetFrequency(_currentCommandedFreq);
-    _doppler_hz = _currentCommandedFreq - 4.092e6f;
+    _doppler_hz = _currentCommandedFreq - 4.092e6f; 
 }
 
 void ChannelProcessor::updateCodeLoop(
@@ -454,7 +413,5 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
     res.symbols[0] = res.symbol;
     // 3. Update Frequencies Moved to runAccumulation
     // 4. FillResult() moved to runAccumulation
-
-    resetAccumulators(_acc);
     return res;
 }
