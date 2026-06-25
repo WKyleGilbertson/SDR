@@ -202,7 +202,7 @@ int main(int argc, char **argv)
 
   FILE *csv = fopen("replay_tracking.csv", "w");
 fprintf(csv,
-    "ms,sample_count,code_phase,doppler,"
+    "ms,sample_count,code_phase,doppler,carrier_nco_hz,code_nco_hz,"
     "Ei,Eq,Pi,Pq,Li,Lq,"
     "E,P,L,pll,dll,snr,is_locked\n");
 
@@ -212,13 +212,15 @@ fprintf(csv,
         chan.Correlator(samples.data() + ms * ms_samples, ms_samples);
 
 fprintf(csv,
-    "%zu,%zu,%.6f,%.3f,"
+    "%zu,%zu,%.6f,%.3f,%.3f,%.3f,"
     "%d,%d,%d,%d,%d,%d,"
     "%.3f,%.3f,%.3f,%.9f,%.9f,%.3f,%d\n",
     ms,
     r.epoch_sample_count,
     r.code_phase,
     r.doppler_hz,
+    r.carrier_nco_hz,
+    r.code_nco_hz,
     r.Ei,
     r.Eq,
     r.Pi,

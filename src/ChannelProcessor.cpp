@@ -418,6 +418,8 @@ void ChannelProcessor::fillResult(
                                           4294967296.0) *
                                          (2.0 * M_PI));
     res.doppler_hz = (float)_doppler_hz;
+    res.carrier_nco_hz = _currentCommandedFreq;
+    res.code_nco_hz = _codeFreqBasis + _oldCodeNco + ((float)_doppler_hz / 1540.0f);
     res.prn = _prn;
     res.snr = _snr;
     res.is_locked = _isLocked;

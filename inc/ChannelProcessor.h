@@ -45,6 +45,8 @@ struct CorrelatorResult
     float code_phase = 0.0f;
     float doppler_hz = 0.0f;
     float snr = 0.0f;
+    float carrier_nco_hz = 0.0f;
+    float code_nco_hz = 0.0f;
     uint64_t epoch_sample_index = 0;
     uint32_t epoch_sample_tick = 0;
     uint32_t unix_time = 0;
