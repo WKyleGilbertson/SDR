@@ -256,6 +256,14 @@ void ChannelProcessor::harvestEpochResult(
 
     res.epochs.push_back(epoch);
 
+    res.Ei = _epochAcc.Ei;
+    res.Eq = _epochAcc.Eq;
+    res.Pi = _epochAcc.Pi;
+    res.Pq = _epochAcc.Pq;
+    res.Li = _epochAcc.Li;
+    res.Lq = _epochAcc.Lq;
+    res.epoch_sample_count = _epochSampleCount;
+
     resetAccumulators(_epochAcc);
     _epochSampleCount = 0;
 }
@@ -287,6 +295,56 @@ TrackingMetrics ChannelProcessor::computeDiscriminators(
             : 0.0f;
 
     m.carrError = raw_angular_error / (float)M_PI;
+
+    if (fabs(m.carrError - _oldCarrError) > 0.5f)
+    {
+        m.carrError = _oldCarrError + (m.carrError * 0.1f);
+    }
+
+    m.E2 = m.Early_I * m.Early_I + m.Early_Q * m.Early_Q;
+    m.L2 = m.Late_I * m.Late_I + m.Late_Q * m.Late_Q;
+    m.E = sqrtf(m.E2);
+    m.P = sqrtf(m.P2);
+    m.L = sqrtf(m.L2);
+
+    m.codeError =
+        ((m.E2 + m.L2) > 1e-6f)
+            ? ((m.E2 - m.L2) / (m.E2 + m.L2))
+            : 0.0f;
+
+    calculateSNR(_acc, _snr);
+    _isLocked =
+        (_snr > 12.0f);
+
+    return m;
+}
+
+TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
+        const Accumulators& acc, size_t sampleCount) {
+    TrackingMetrics m = {};
+
+    float norm = 1.0f / (float)sampleCount;
+
+    m.I = (float)acc.Pi * norm;
+    m.Q = (float)acc.Pq * norm;
+
+    m.Early_I = (float)acc.Ei * norm;
+    m.Early_Q = (float)acc.Eq * norm;
+    m.Prompt_I = m.I;
+    m.Prompt_Q = m.Q;
+    m.Late_I = (float)acc.Li * norm;
+    m.Late_Q = (float)acc.Lq * norm;
+    m.dynamicT = (float)sampleCount / (float)_fs;
+    m.P2 = m.I * m.I + m.Q * m.Q;
+    float sign_I = (m.I >= 0.0f) ? 1.0f : -1.0f;
+    float clean_I = m.I * sign_I;
+    float clean_Q = m.Q * sign_I;
+    float raw_angular_error =
+        (clean_I > 1e-6f)
+            ? atanf(clean_Q / clean_I)
+            : 0.0f;
+
+    m.carrError = raw_angular_error / (2.0f * (float)M_PI);
 
     if (fabs(m.carrError - _oldCarrError) > 0.5f)
     {
@@ -348,8 +406,6 @@ void ChannelProcessor::fillResult(
                                          (2.0 * M_PI));
     res.doppler_hz = (float)_doppler_hz;
     res.prn = _prn;
-    res.Pi = _acc.Pi;
-    res.Pq = _acc.Pq;
     res.snr = _snr;
     res.is_locked = _isLocked;
     res.E_mag = m.E;

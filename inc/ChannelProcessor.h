@@ -30,8 +30,12 @@ struct EpochResult
 struct CorrelatorResult
 {
     int prn = 0;
+    int32_t Ei = 0;
+    int32_t Eq = 0;
     int32_t Pi = 0;
     int32_t Pq = 0;
+    int32_t Li = 0;
+    int32_t Lq = 0;
     float E_mag = 0.0f;
     float P_mag = 0.0f;
     float L_mag = 0.0f;
@@ -51,6 +55,7 @@ struct CorrelatorResult
     int numSymbols = 0;
     size_t consumed_sample_count = 0; // Number of samples consumed from the input buffer for this epoch's processing
     int epoch_offset_samples = -1;
+    size_t epoch_sample_count = 0;
     std::vector<EpochResult> epochs;
 };
 struct LoopFilter
@@ -121,6 +126,9 @@ private:
 
     TrackingMetrics computeDiscriminators(
         size_t availableSamples);
+
+    TrackingMetrics computeEpochDiscriminators(
+        const Accumulators& acc, size_t sampleCount);
 
     void updateCarrierLoop(
         const TrackingMetrics &m);

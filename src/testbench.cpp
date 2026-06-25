@@ -74,12 +74,14 @@ static void runCodePhaseSweep(
 {
     const size_t ms_samples = meta.fs_rate / 1000;
 
-    FILE *csv = fopen("code_phase_sweep.csv", "w");
-    if (!csv)
-        return;
+//    FILE *csv = fopen("code_phase_sweep.csv", "w");
+//    if (!csv)
+//        return;
 
+    /*
     fprintf(csv,
             "sample_offset,chip_offset,code_phase,E,P,L,dll,Pi,Pq,pll,snr\n");
+            */
 
     for (int sampleOffset = -96;
          sampleOffset <= -64;
@@ -114,6 +116,7 @@ static void runCodePhaseSweep(
                 samples.data(),
                 ms_samples);
 
+        /*
         fprintf(csv,
                 "%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.9f,%d,%d,%.9f,%.3f\n",
                 sampleOffset,
@@ -126,12 +129,12 @@ static void runCodePhaseSweep(
                 r.Pi,
                 r.Pq,
                 r.carrier_phase_error,
-                r.snr);
+                r.snr); */
     }
 
-    fclose(csv);
+//    fclose(csv);
 
-    printf("[OK] wrote code_phase_sweep.csv\n");
+//    printf("[OK] wrote code_phase_sweep.csv\n");
 }
 
 int main(int argc, char **argv)
@@ -179,7 +182,7 @@ int main(int argc, char **argv)
   printf("[ACQ] replay code=%.4f bin=%d snr=%.1f\n",
          acq.codePhase, acq.bin, acq.snr);
 
-  runCodePhaseSweep(meta, samples, acq);
+//  runCodePhaseSweep(meta, samples, acq);
 
   AcqResult track_acq = acq;
   track_acq.codePhase = 170.375f;
@@ -198,25 +201,37 @@ int main(int argc, char **argv)
   chan.setInputIsComplex(meta.input_is_complex);
 
   FILE *csv = fopen("replay_tracking.csv", "w");
-  fprintf(csv, "ms,code_phase,doppler,Pi,Pq,snr,pll,E,P,L,dll\n");
+fprintf(csv,
+    "ms,sample_count,code_phase,doppler,"
+    "Ei,Eq,Pi,Pq,Li,Lq,"
+    "E,P,L,pll,dll,snr,is_locked\n");
 
   for (size_t ms = 0; ms < ms_count; ++ms)
   {
     CorrelatorResult r =
         chan.Correlator(samples.data() + ms * ms_samples, ms_samples);
 
-    fprintf(csv, "%zu,%.6f,%.3f,%d,%d,%.3f,%.9f,%.3f,%.3f,%.3f,%.9f\n",
-            ms,
-            r.code_phase,
-            r.doppler_hz,
-            r.Pi,
-            r.Pq,
-            r.snr,
-            r.carrier_phase_error,
-            r.E_mag,
-            r.P_mag,
-            r.L_mag,
-            r.code_error);
+fprintf(csv,
+    "%zu,%zu,%.6f,%.3f,"
+    "%d,%d,%d,%d,%d,%d,"
+    "%.3f,%.3f,%.3f,%.9f,%.9f,%.3f,%d\n",
+    ms,
+    r.epoch_sample_count,
+    r.code_phase,
+    r.doppler_hz,
+    r.Ei,
+    r.Eq,
+    r.Pi,
+    r.Pq,
+    r.Li,
+    r.Lq,
+    r.E_mag,
+    r.P_mag,
+    r.L_mag,
+    r.carrier_phase_error,
+    r.code_error,
+    r.snr,
+    r.is_locked ? 1 : 0);
   }
 
   fclose(csv);
