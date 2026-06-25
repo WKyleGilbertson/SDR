@@ -226,7 +226,10 @@ void ChannelProcessor::runAccumulation(
 
         if (_codeNco.getRotations() < prev_rotations)
         {
+            TrackingMetrics m =
+                computeEpochDiscriminators(_epochAcc, _epochSampleCount);
             harvestEpochResult(res, samples[i], i);
+            fillResult(res, m, _codeNco.getCodePhase());
         }
     }
 }
@@ -264,6 +267,10 @@ void ChannelProcessor::harvestEpochResult(
     res.Lq = _epochAcc.Lq;
     res.epoch_sample_count = _epochSampleCount;
 
+    TrackingMetrics em =
+    computeEpochDiscriminators(_epochAcc,
+                               _epochSampleCount);
+
     resetAccumulators(_epochAcc);
     _epochSampleCount = 0;
 }
@@ -294,7 +301,7 @@ TrackingMetrics ChannelProcessor::computeDiscriminators(
             ? atanf(clean_Q / clean_I)
             : 0.0f;
 
-    m.carrError = raw_angular_error / (float)M_PI;
+    m.carrError = raw_angular_error / (2.0f * (float)M_PI);
 
     if (fabs(m.carrError - _oldCarrError) > 0.5f)
     {
@@ -362,7 +369,7 @@ TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
             ? ((m.E2 - m.L2) / (m.E2 + m.L2))
             : 0.0f;
 
-    calculateSNR(_acc, _snr);
+    calculateSNR((Accumulators&)acc, _snr);
     _isLocked =
         (_snr > 12.0f);
 
@@ -447,7 +454,7 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
     updateCodeLoop(m);
     }
 
-    fillResult(res, m, boundary_code_phase);
+//    fillResult(res, m, boundary_code_phase);
 
     resetAccumulators(_acc);
     return res;
