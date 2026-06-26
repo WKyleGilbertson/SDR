@@ -1,9 +1,66 @@
 #include "ChannelProcessor.h"
 #include <cmath>
 
-void ChannelProcessor::setSampleDump(FILE * fp, int max_samples) {
+/*void ChannelProcessor::setSampleDump(FILE * fp, int max_samples) {
     _sampleDump = fp;
     _sampleDumpRemaining = max_samples;
+} */
+
+void ChannelProcessor::enableSampleTrace(
+    const char *filename,
+    size_t samples)
+{
+    _sampleDump = fopen(filename, "w");
+
+    if (_sampleDump)
+    {
+        fprintf(_sampleDump,
+            "sample,rot,code_phase,...\n");
+
+        _sampleDumpRemaining = samples;
+    }
+}
+
+void ChannelProcessor::dumpSampleTrace(
+    const RawSample &sample,
+    uint32_t carrIdx,
+    float c,
+    float s,
+    float bb_i,
+    float bb_q,
+    int32_t prompt_i_term,
+    int32_t prompt_q_term)
+{
+    if (!_sampleDump || _sampleDumpRemaining == 0)
+        return;
+
+    fprintf(_sampleDump,
+        "%llu,%u,%.6f,%u,%u,%d,%d,%d,%u,%u,%.9f,%.9f,"
+        "%d,%d,%.6f,%.6f,%d,%d,%d,%d,%d,%d\n",
+        (unsigned long long)_sampleCounter,
+        _codeNco.getRotations(),
+        _codeNco.getCodePhase(),
+        _codeNco.getRotations(),
+        _codeNco.getFinePhase16(),
+        _codeNco.Early,
+        _codeNco.Prompt,
+        _codeNco.Late,
+        _carrNco.getPhase(),
+        carrIdx,
+        c,
+        s,
+        sample.i,
+        sample.q,
+        bb_i,
+        bb_q,
+        prompt_i_term,
+        prompt_q_term,
+        _epochAcc.Pi,
+        _epochAcc.Pq,
+        _epochAcc.Ei,
+        _epochAcc.Li);
+
+    _sampleDumpRemaining--;
 }
 
 void ChannelProcessor::setLoopEnables(bool enable_pll, bool enable_dll)
@@ -171,6 +228,12 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
            _codeNco.getCodePhase());
 }
 
+ChannelProcessor::~ChannelProcessor()
+{
+    if (_sampleDump)
+        fclose(_sampleDump);
+}
+
 void ChannelProcessor::runAccumulation(
     const RawSample *samples,
     size_t availableSamples,
@@ -231,36 +294,8 @@ void ChannelProcessor::runAccumulation(
 
         _carrNco.clk();
         _codeNco.clk();
-if (_sampleDump && _sampleDumpRemaining > 0)
-{
-    fprintf(_sampleDump,
-        "%llu,%u,%.6f,%u,%u,%d,%d,%d,%u,%u,%.9f,%.9f,"
-        "%d,%d,%.6f,%.6f,%d,%d,%d,%d,%d,%d\n",
-        (unsigned long long)_sampleCounter,
-        _codeNco.getRotations(),
-        _codeNco.getCodePhase(),
-        _codeNco.getRotations(),
-        _codeNco.getFinePhase16(),
-        _codeNco.Early,
-        _codeNco.Prompt,
-        _codeNco.Late,
-        _carrNco.getPhase(),
-        carrIdx,
-        c,
-        s,
-        samples[i].i,
-        samples[i].q,
-        bb_i,
-        bb_q,
-        prompt_i_term,
-        prompt_q_term,
-        _epochAcc.Pi,
-        _epochAcc.Pq,
-        _epochAcc.Ei,
-        _epochAcc.Li);
 
-    _sampleDumpRemaining--;
-}
+dumpSampleTrace(samples[i], carrIdx, c, s, bb_i, bb_q, prompt_i_term, prompt_q_term);  
 
         if (_codeNco.getRotations() < prev_rotations)
         {

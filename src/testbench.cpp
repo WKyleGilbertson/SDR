@@ -160,8 +160,50 @@ static void runCodePhaseSweep(
     printf("[OK] wrote code_phase_sweep.csv\n");
 }
 
+void writeReplayTrackingHeader(FILE * csv) {
+fprintf(csv,
+    "ms,sample_count,code_phase,doppler,carrier_nco_hz,code_nco_hz,"
+    "Ei,Eq,Pi,Pq,Li,Lq,"
+    "E,P,L,pll,dll,snr,is_locked\n");};
+
+void writeReplayTrackingRow(FILE * csv, size_t ms, CorrelatorResult r) {
+  fprintf(csv,
+    "%zu,%zu,%.6f,%.3f,%.3f,%.3f,"
+    "%d,%d,%d,%d,%d,%d,"
+    "%.3f,%.3f,%.3f,%.9f,%.9f,%.3f,%d\n",
+    ms,
+    r.epoch_sample_count,
+    r.code_phase,
+    r.doppler_hz,
+    r.carrier_nco_hz,
+    r.code_nco_hz,
+    r.Ei,
+    r.Eq,
+    r.Pi,
+    r.Pq,
+    r.Li,
+    r.Lq,
+    r.E_mag,
+    r.P_mag,
+    r.L_mag,
+    r.carrier_phase_error,
+    r.code_error,
+    r.snr,
+    r.is_locked ? 1 : 0);
+};
+
+/*
+writeHandoffHeader(csv);
+writeHandoffRow(csv, acq, track_acq, optional_refined_acq);
+*/
+
 int main(int argc, char **argv)
 {
+  bool enableSampleTrace = false;
+  bool enableReplayTracking = true;
+  bool enableHandoffLog = true;
+  bool enableCodePhaseSweep = false;
+
   const char *base = (argc > 1) ? argv[1] : "tracking_capture";
 
   char metaPath[256];
@@ -205,8 +247,10 @@ int main(int argc, char **argv)
   printf("[ACQ] replay code=%.4f bin=%d snr=%.1f\n",
          acq.codePhase, acq.bin, acq.snr);
 
-//  runCodePhaseSweep(meta, samples, acq);
-//  return 0;
+if (enableCodePhaseSweep) {
+  runCodePhaseSweep(meta, samples, acq);
+  return 0;
+}
 
   AcqResult track_acq = acq;
   //track_acq.codePhase = 170.375f;
@@ -226,54 +270,23 @@ int main(int argc, char **argv)
   chan.setInputIsComplex(meta.input_is_complex);
   chan.setSampleGain(8.0f);
 
-  FILE *sampleDump = fopen("sample_trace.csv", "w");
-fprintf(sampleDump,
-    "sample,rot,code_phase,chip,fine,early,prompt,late,carr_phase,carr_idx,"
-    "cos,sin,raw_i,raw_q,bb_i,bb_q,prompt_i_term,prompt_q_term,"
-    "Pi_running,Pq_running,Ei_running,Li_running\n");
-
-chan.setSampleDump(sampleDump, 512);
+  if (enableSampleTrace)
+    chan.enableSampleTrace("sample_trace.csv", 512);
 
   FILE *csv = fopen("replay_tracking.csv", "w");
-fprintf(csv,
-    "ms,sample_count,code_phase,doppler,carrier_nco_hz,code_nco_hz,"
-    "Ei,Eq,Pi,Pq,Li,Lq,"
-    "E,P,L,pll,dll,snr,is_locked\n");
+writeReplayTrackingHeader(csv);
 
-  for (size_t ms = 0; ms < ms_count; ++ms)
-  {
+for (size_t ms = 0; ms < ms_count; ++ms)
+{
     CorrelatorResult r =
         chan.Correlator(samples.data() + ms * ms_samples, ms_samples);
 
-fprintf(csv,
-    "%zu,%zu,%.6f,%.3f,%.3f,%.3f,"
-    "%d,%d,%d,%d,%d,%d,"
-    "%.3f,%.3f,%.3f,%.9f,%.9f,%.3f,%d\n",
-    ms,
-    r.epoch_sample_count,
-    r.code_phase,
-    r.doppler_hz,
-    r.carrier_nco_hz,
-    r.code_nco_hz,
-    r.Ei,
-    r.Eq,
-    r.Pi,
-    r.Pq,
-    r.Li,
-    r.Lq,
-    r.E_mag,
-    r.P_mag,
-    r.L_mag,
-    r.carrier_phase_error,
-    r.code_error,
-    r.snr,
-    r.is_locked ? 1 : 0);
-  }
+writeReplayTrackingRow(csv, ms, r);
+
+  } 
 
   fclose(csv);
 
   printf("[OK] wrote replay_tracking.csv using %zu ms\n", ms_count);
-  if (sampleDump)
-    fclose(sampleDump);
   return 0;
 }

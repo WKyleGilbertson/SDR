@@ -110,14 +110,25 @@ public:
                          _sampleCounter(0) {}
     // The real constructor we use after lock
     ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT &sv);
+    ~ChannelProcessor();
     CorrelatorResult Correlator(const RawSample *samples, size_t availableSamples);
     int getPRN() const { return _prn; }
     bool isLocked() const { return _isLocked; }
     float getSNR() const { return (float)_snr; }
     void setInputIsComplex(bool is_complex) { _input_is_complex = is_complex; }
     void setLoopEnables(bool enable_pll, bool enable_dll);
-    void setSampleDump(FILE * pf, int max_samples);
+//    void setSampleDump(FILE * pf, int max_samples);
+    void enableSampleTrace( const char *filename, size_t samples);
     void setSampleGain(float gain) {_sampleGain = gain;};
+    void dumpSampleTrace(
+        const RawSample &sample,
+        uint32_t carrIdx,
+        float c,
+        float s,
+        float bb_i,
+        float bb_q,
+        int32_t prompt_i_term,
+        int32_t prompt_q_term);
 
 private:
     void runAccumulation(
