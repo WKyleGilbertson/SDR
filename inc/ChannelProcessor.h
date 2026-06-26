@@ -10,7 +10,7 @@
 #include "L1IFUtil.hpp"  // Has the bit unpacking
 #include "PCSEngine.hpp" // This defines AcqResult
 
-static constexpr float DEBUG_CODE_PHASE_SHIM =  0.0f;
+//static constexpr float DEBUG_CODE_PHASE_SHIM =  0.0f;
 
 struct EpochResult
 {

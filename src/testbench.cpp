@@ -196,6 +196,88 @@ void writeReplayTrackingRow(FILE * csv, size_t ms, CorrelatorResult r) {
 writeHandoffHeader(csv);
 writeHandoffRow(csv, acq, track_acq, optional_refined_acq);
 */
+float pcsToTrackerCodePhase(float pcsCode)
+{
+    // EPL reg Prompt is bit 32 which is 16 samples or 2 chips
+    // FFT size is 16384 not 16386 which is off by 16 or 1 chip
+    // Those two together are 3 chips
+    float trackerCode = 1023.0f - pcsCode + 3.0f;
+
+    while (trackerCode < 0.0f)
+        trackerCode += 1023.0f;
+
+    while (trackerCode >= 1023.0f)
+        trackerCode -= 1023.0f;
+
+    return trackerCode;
+}
+
+static AcqResult refineHandoffWithTracker(
+    const ReplayMeta &meta,
+    const std::vector<RawSample> &samples,
+    const AcqResult &base_acq)
+{
+    const size_t ms_samples = meta.fs_rate / 1000;
+    const int refine_ms = 20;
+
+    AcqResult best = base_acq;
+    float bestP = -1.0f;
+
+    float centers[] = {
+        pcsToTrackerCodePhase(base_acq.codePhase)
+    };
+
+    for (float center : centers)
+    {
+        //for (int sampleOffset = -64; sampleOffset <= 64; ++sampleOffset)
+        for (int sampleOffset = -1; sampleOffset <= 48; ++sampleOffset)
+        {
+            AcqResult trial = base_acq;
+            trial.codePhase = center + ((float)sampleOffset / 16.0f);
+
+            while (trial.codePhase < 0.0f)
+                trial.codePhase += 1023.0f;
+            while (trial.codePhase >= 1023.0f)
+                trial.codePhase -= 1023.0f;
+
+            G2INIT sv(trial.prn, 0);
+            ChannelProcessor chan((double)meta.fs_rate, trial, sv);
+
+            chan.setInputIsComplex(meta.input_is_complex);
+            chan.setSampleGain(8.0f);
+            chan.setLoopEnables(false, false);
+
+            double Psum = 0.0;
+
+            for (int ms = 0; ms < refine_ms; ++ms)
+            {
+                CorrelatorResult r =
+                    chan.Correlator(samples.data() + ms * ms_samples,
+                                    ms_samples);
+                Psum += r.P_mag;
+            }
+
+            float Pavg = (float)(Psum / refine_ms);
+
+            if (Pavg > bestP)
+            {
+                bestP = Pavg;
+                best = trial;
+                best.snr = Pavg;
+            }
+        }
+    }
+
+    printf("[HANDOFF] coarse code=%.4f bin=%d refined code=%.4f metric=%.3f\n",
+           base_acq.codePhase,
+           base_acq.bin,
+           best.codePhase,
+           bestP);
+
+    return best;
+}
+
+
 
 int main(int argc, char **argv)
 {
@@ -252,9 +334,8 @@ if (enableCodePhaseSweep) {
   return 0;
 }
 
-  AcqResult track_acq = acq;
-  //track_acq.codePhase = 170.375f;
-  track_acq.codePhase = 45.375f;
+AcqResult track_acq =
+    refineHandoffWithTracker(meta, samples, acq);
 
   printf("[TRK INIT OVERRIDE] acq code=%.4f track code=%.4f\n",
          acq.codePhase,

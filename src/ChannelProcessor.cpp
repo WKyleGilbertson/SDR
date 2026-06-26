@@ -147,7 +147,7 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     /*
     _initialCodePhase = init.codePhase;
     */
-    _initialCodePhase = init.codePhase + DEBUG_CODE_PHASE_SHIM;
+    _initialCodePhase = init.codePhase;
 
     while (_initialCodePhase < 0.0f)
         _initialCodePhase += 1023.0f;
@@ -173,7 +173,7 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     _absoluteBaseRotations = 0;
     _codeNco.InitializeEPLPipeline(_initialCodePhase, chipTravelDelay);
 
-    /* Debug*/
+    /* Debug
     printf(
         "[CHAN INIT DETAIL] "
         "acq=%.4f nco=%.4f rot=%u fine=%u "
@@ -217,15 +217,13 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     _codeLF.omega_n = _codeLF.Bn * 8.0f * _codeLF.zeta / (4.0f * _codeLF.zeta * _codeLF.zeta + 1.0f);
     _codeLF.tau1 = _codeLF.gain / (_codeLF.omega_n * _codeLF.omega_n);
     _codeLF.tau2 = 2.0f * _codeLF.zeta / _codeLF.omega_n;
-    printf("[CHAN INIT] prn=%d bin=%d acq_code=%.4f shim=%.4f init_code=%.4f carr=%.1f dop=%.1f nco_code=%.4f\n",
-           init.prn,
-           init.bin,
-           init.codePhase,
-           DEBUG_CODE_PHASE_SHIM,
-           _initialCodePhase,
-           _currentCommandedFreq,
-           _doppler_hz,
-           _codeNco.getCodePhase());
+ printf("[CHAN INIT] PRN %3d code=%8.4f %4u_%.2u F:%.1f dF: %7.1f\n",
+       init.prn,
+       init.codePhase,
+       _codeNco.getRotations(),
+       _codeNco.getFinePhase16(),
+       _currentCommandedFreq,
+       _doppler_hz);
 }
 
 ChannelProcessor::~ChannelProcessor()

@@ -154,6 +154,7 @@ void NCO::InitializeEPLPipeline(float initialCodePhase, int chipTravelDelay)
     while (bit63_chip < 0)
         bit63_chip += 1023;
 
+    /*
     printf(
         "[EPL INIT] code=%.4f rot=%u delay=%d "
         "bit0=%d bit32=%d bit63=%d\n",
@@ -162,5 +163,5 @@ void NCO::InitializeEPLPipeline(float initialCodePhase, int chipTravelDelay)
         chipTravelDelay,
         bit0_chip % 1023,
         bit32_chip % 1023,
-        bit63_chip % 1023);
+        bit63_chip % 1023); */
 }

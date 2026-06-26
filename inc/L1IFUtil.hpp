@@ -7,6 +7,22 @@
 #include <string>
 #include <cstdint>
 #include <cstdio>
+namespace ReceiverConfig
+{
+    constexpr int    CA_CHIPS          = 1023;
+    constexpr int    SAMPLES_PER_CHIP  = 16;
+    constexpr int    SAMPLES_PER_MS    = CA_CHIPS * SAMPLES_PER_CHIP; // 16368
+    constexpr int    PCS_FFT_SIZE      = 16384;
+
+    constexpr double CODE_FREQ_HZ      = 1.023e6;
+    constexpr double L1_IF_HZ          = 4.092e6;
+
+    constexpr int    EPL_PROMPT_BIT    = 32;
+    constexpr int    EPL_EARLY_BIT     = 24;  // example only
+    constexpr int    EPL_LATE_BIT      = 40;  // example only
+
+    constexpr int    CHIP_TRAVEL_DELAY = 0;   // once finalized
+}
 
 #pragma pack(push, 1)
 struct RFE_Header_t
