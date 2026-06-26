@@ -146,8 +146,8 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     _carrLF.Bn = 40.0f;
     _carrLF.zeta = 0.707f;
     //_carrLF.zeta = 1.1f;
-    _carrLF.gain = 0.60f;
-    //_carrLF.gain = 1.0f;
+    //_carrLF.gain = 0.60f;
+    _carrLF.gain = 1.0f;
     _carrLF.omega_n = _carrLF.Bn * 8.0f * _carrLF.zeta / (4.0f * _carrLF.zeta * _carrLF.zeta + 1.0f);
     _carrLF.tau1 = _carrLF.gain / (_carrLF.omega_n * _carrLF.omega_n);
     _carrLF.tau2 = 2.0f * _carrLF.zeta / _carrLF.omega_n;
@@ -188,8 +188,8 @@ void ChannelProcessor::runAccumulation(
 
 //        _codeNco.clk();
 
-        float s = _carrNco.sine(carrIdx);
-        float c = _carrNco.cosine(carrIdx);
+        float s = _carrNco.sine(carrIdx) * 8.0f;
+        float c = _carrNco.cosine(carrIdx) * 8.0f;
         // int16_t s = (int16_t)(_carrNco.sine(carrIdx) * 127.0f);
         // int16_t c = (int16_t)(_carrNco.cosine(carrIdx) * 127.0f);
         int16_t in_i = samples[i].i;
@@ -211,7 +211,7 @@ void ChannelProcessor::runAccumulation(
         {
             // Real IF: sample * local oscillator
             bb_i = (float)(in_i * c);
-            bb_q = -(float)(in_i * s);
+            bb_q = (float)(in_i * s);
             // bb_i = (int16_t)(in_i * c);
             // bb_q = (int16_t)(-in_i * s);
         }
@@ -342,18 +342,19 @@ TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
     m.Late_Q = (float)acc.Lq * norm;
     m.dynamicT = (float)sampleCount / (float)_fs;
     m.P2 = m.I * m.I + m.Q * m.Q;
-        float sign_I = (m.I >= 0.0f) ? 1.0f : -1.0f;
-        float clean_I = m.I * sign_I;
-        float clean_Q = m.Q * sign_I;
+//        float sign_I = (m.I >= 0.0f) ? 1.0f : -1.0f;
+//        float clean_I = m.I * sign_I;
+//        float clean_Q = m.Q * sign_I;
     float raw_angular_error =
-/*        (fabsf(m.I) > 1e-6f)
+        (fabsf(m.I) > 1e-6f)
             ? atanf(m.Q / m.I)
-            : 0.0f; */
-    (clean_I > 1e-6f)
+            : 0.0f;
+/*    (clean_I > 1e-6f)
         ? atanf(clean_Q / clean_I)
-        : 0.0f;
+        : 0.0f; */
 
-    m.carrError = raw_angular_error / (2.0f * (float)M_PI);
+    //m.carrError = raw_angular_error / (2.0f * (float)M_PI);
+    m.carrError = raw_angular_error;
 
     if (fabs(m.carrError - _oldCarrError) > 0.5f)
     {
@@ -381,16 +382,24 @@ TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
 void ChannelProcessor::updateCarrierLoop(
     const TrackingMetrics &m)
 {
-
-    float carrNcoUpdate = _oldCarrNco + (_carrLF.tau2 / _carrLF.tau1) *
+    float kp = _carrLF.tau2 / _carrLF.tau1;
+    float ki = m.dynamicT / _carrLF.tau1;
+    _oldCarrNco += ki * m.carrError;
+    float carrNcoUpdate =
+        kp * m.carrError + _oldCarrNco;
+    _oldCarrError = m.carrError;
+    _currentCommandedFreq =
+        _carrFreqBasis - carrNcoUpdate;
+    _carrNco.SetFrequency(_currentCommandedFreq);
+    _doppler_hz = _currentCommandedFreq - 4.092e6f;
+/*    float carrNcoUpdate = _oldCarrNco + (_carrLF.tau2 / _carrLF.tau1) *
                                             (m.carrError - _oldCarrError) *
                                             (m.dynamicT / _carrLF.tau1);
     _oldCarrNco = carrNcoUpdate;
     _oldCarrError = m.carrError;
-    //_currentCommandedFreq = _carrFreqBasis - carrNcoUpdate;
     _currentCommandedFreq = _carrFreqBasis + carrNcoUpdate;
     _carrNco.SetFrequency(_currentCommandedFreq);
-    _doppler_hz = _currentCommandedFreq - 4.092e6f;
+    _doppler_hz = _currentCommandedFreq - 4.092e6f;*/
 }
 
 void ChannelProcessor::updateCodeLoop(
