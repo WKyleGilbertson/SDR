@@ -116,6 +116,8 @@ public:
     float getSNR() const { return (float)_snr; }
     void setInputIsComplex(bool is_complex) { _input_is_complex = is_complex; }
     void setLoopEnables(bool enable_pll, bool enable_dll);
+    void setSampleDump(FILE * pf, int max_samples);
+    void setSampleGain(float gain) {_sampleGain = gain;};
 
 private:
     void runAccumulation(
@@ -158,6 +160,7 @@ private:
     Accumulators _epochAcc;
     uint32_t _epochSampleCount = 0;
     uint64_t _sampleCounter = 0;
+    float _sampleGain = 4.0f;
     void resetAccumulators(Accumulators &acc);
     void calculateSNR(Accumulators &acc, float &snr);
     // Filter Coefficients
@@ -179,4 +182,6 @@ private:
     bool _enable_pll = true;
     bool _enable_dll = true;
     bool _fixed_nco_debug = false;
+    FILE * _sampleDump = nullptr;
+    int _sampleDumpRemaining = 0;
 };

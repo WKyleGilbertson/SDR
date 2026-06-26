@@ -1,7 +1,10 @@
-// #define DEBUG_ROLLOVER
-#define DEBUG_CODE_STEP
 #include "ChannelProcessor.h"
 #include <cmath>
+
+void ChannelProcessor::setSampleDump(FILE * fp, int max_samples) {
+    _sampleDump = fp;
+    _sampleDumpRemaining = max_samples;
+}
 
 void ChannelProcessor::setLoopEnables(bool enable_pll, bool enable_dll)
 {
@@ -107,7 +110,7 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
 
     float spc = (float)_fs / 1023000.0f;
     int chipTravelDelay = 0;
-    // int chipTravelDelay = (int)std::round(32.0f / spc);
+    //int chipTravelDelay = (int)std::round(32.0f / spc);
 
     _continuousTrackedChips = _initialCodePhase;
     _absoluteBaseRotations = 0;
@@ -142,13 +145,15 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     //_carrLF.Bn = 25.0f;
     _carrLF.Bn = 40.0f;
     _carrLF.zeta = 0.707f;
-    //_carrLF.gain = 0.60f;
-    _carrLF.gain = 1.0f;
+    //_carrLF.zeta = 1.1f;
+    _carrLF.gain = 0.60f;
+    //_carrLF.gain = 1.0f;
     _carrLF.omega_n = _carrLF.Bn * 8.0f * _carrLF.zeta / (4.0f * _carrLF.zeta * _carrLF.zeta + 1.0f);
     _carrLF.tau1 = _carrLF.gain / (_carrLF.omega_n * _carrLF.omega_n);
     _carrLF.tau2 = 2.0f * _carrLF.zeta / _carrLF.omega_n;
 
     _codeLF.Bn = 20.0f;
+    //_codeLF.Bn = 10.0f;
     //_codeLF.Bn = 1.0f;
     _codeLF.zeta = 0.707f;
     _codeLF.gain = 1.0f;
@@ -210,11 +215,15 @@ void ChannelProcessor::runAccumulation(
             // bb_i = (int16_t)(in_i * c);
             // bb_q = (int16_t)(-in_i * s);
         }
+        int32_t prompt_i_term = (int32_t)(bb_i * _codeNco.Prompt);
+        int32_t prompt_q_term = (int32_t)(bb_q * _codeNco.Prompt);
 
         _epochAcc.Ei += (int32_t)(bb_i * _codeNco.Early);
         _epochAcc.Eq += (int32_t)(bb_q * _codeNco.Early);
-        _epochAcc.Pi += (int32_t)(bb_i * _codeNco.Prompt);
-        _epochAcc.Pq += (int32_t)(bb_q * _codeNco.Prompt);
+        //_epochAcc.Pi += (int32_t)(bb_i * _codeNco.Prompt);
+        //_epochAcc.Pq += (int32_t)(bb_q * _codeNco.Prompt);
+        _epochAcc.Pi += prompt_i_term;
+        _epochAcc.Pq += prompt_q_term;
         _epochAcc.Li += (int32_t)(bb_i * _codeNco.Late);
         _epochAcc.Lq += (int32_t)(bb_q * _codeNco.Late);
 
@@ -222,58 +231,58 @@ void ChannelProcessor::runAccumulation(
 
         _carrNco.clk();
         _codeNco.clk();
+if (_sampleDump && _sampleDumpRemaining > 0)
+{
+    fprintf(_sampleDump,
+        "%llu,%u,%.6f,%u,%u,%d,%d,%d,%u,%u,%.9f,%.9f,"
+        "%d,%d,%.6f,%.6f,%d,%d,%d,%d,%d,%d\n",
+        (unsigned long long)_sampleCounter,
+        _codeNco.getRotations(),
+        _codeNco.getCodePhase(),
+        _codeNco.getRotations(),
+        _codeNco.getFinePhase16(),
+        _codeNco.Early,
+        _codeNco.Prompt,
+        _codeNco.Late,
+        _carrNco.getPhase(),
+        carrIdx,
+        c,
+        s,
+        samples[i].i,
+        samples[i].q,
+        bb_i,
+        bb_q,
+        prompt_i_term,
+        prompt_q_term,
+        _epochAcc.Pi,
+        _epochAcc.Pq,
+        _epochAcc.Ei,
+        _epochAcc.Li);
 
-#ifdef DEBUG_CODE_STEP
-        static uint64_t last_chip_sample = 0;
-        static uint16_t last_rot = 0;
-        static int print_count = 0;
-
-        uint16_t curr_rot = _codeNco.getRotations();
-
-        if (curr_rot != last_rot)
-        {
-            uint64_t delta = _sampleCounter - last_chip_sample;
-
-            if (print_count < 200)
-            {
-                printf("[CODE STEP] sample=%llu rot=%u delta=%llu phase=%.6f P=%d\n",
-                       (unsigned long long)_sampleCounter,
-                       curr_rot,
-                       (unsigned long long)delta,
-                       _codeNco.getCodePhase(),
-                       _codeNco.Prompt);
-                print_count++;
-            }
-
-            last_chip_sample = _sampleCounter;
-            last_rot = curr_rot;
-        }
-#endif
-
-#ifdef DEBUG_ROLLOVER
-        uint16_t curr_rot = _codeNco.getRotations();
-        float curr_code_phase = _codeNco.getCodePhase();
-        static int rolloverPrintCount = 0;
-        if (curr_rot < prev_rotations)
-        {
-            if (rolloverPrintCount++ % 100 == 0)
-            {
-                printf("[ROLLOVER] PRN %d offset=%zu prev=%.4f curr=%.4f\n",
-                       _prn, i, prev_code_phase, curr_code_phase);
-            }
-        }
-#endif
+    _sampleDumpRemaining--;
+}
 
         if (_codeNco.getRotations() < prev_rotations)
         {
             TrackingMetrics m =
                 computeEpochDiscriminators(_epochAcc, _epochSampleCount);
-            harvestEpochResult(res, samples[i], i);
-            fillResult(res, m, _codeNco.getCodePhase());
+
+      float carrier_before = _currentCommandedFreq;
+    float old_nco_before = _oldCarrNco;
+    float old_err_before = _oldCarrError;
+
+    static int pll_print_count = 0;              
+
             if (_enable_pll)
                 updateCarrierLoop(m);
+
+      float carrier_after = _currentCommandedFreq;
+
             if (_enable_dll)
                 updateCodeLoop(m);
+
+            harvestEpochResult(res, samples[i], i);
+            fillResult(res, m, _codeNco.getCodePhase());
         }
     }
 }
@@ -311,10 +320,6 @@ void ChannelProcessor::harvestEpochResult(
     res.Lq = _epochAcc.Lq;
     res.epoch_sample_count = _epochSampleCount;
 
-    TrackingMetrics em =
-        computeEpochDiscriminators(_epochAcc,
-                                   _epochSampleCount);
-
     resetAccumulators(_epochAcc);
     _epochSampleCount = 0;
 }
@@ -337,17 +342,16 @@ TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
     m.Late_Q = (float)acc.Lq * norm;
     m.dynamicT = (float)sampleCount / (float)_fs;
     m.P2 = m.I * m.I + m.Q * m.Q;
-    //    float sign_I = (m.I >= 0.0f) ? 1.0f : -1.0f;
-    //    float clean_I = m.I * sign_I;
-    //    float clean_Q = m.Q * sign_I;
+        float sign_I = (m.I >= 0.0f) ? 1.0f : -1.0f;
+        float clean_I = m.I * sign_I;
+        float clean_Q = m.Q * sign_I;
     float raw_angular_error =
-        (fabsf(m.I) > 1e-6f)
+/*        (fabsf(m.I) > 1e-6f)
             ? atanf(m.Q / m.I)
-            : 0.0f;
-    /*
+            : 0.0f; */
     (clean_I > 1e-6f)
         ? atanf(clean_Q / clean_I)
-        : 0.0f; */
+        : 0.0f;
 
     m.carrError = raw_angular_error / (2.0f * (float)M_PI);
 
@@ -383,7 +387,8 @@ void ChannelProcessor::updateCarrierLoop(
                                             (m.dynamicT / _carrLF.tau1);
     _oldCarrNco = carrNcoUpdate;
     _oldCarrError = m.carrError;
-    _currentCommandedFreq = _carrFreqBasis - carrNcoUpdate;
+    //_currentCommandedFreq = _carrFreqBasis - carrNcoUpdate;
+    _currentCommandedFreq = _carrFreqBasis + carrNcoUpdate;
     _carrNco.SetFrequency(_currentCommandedFreq);
     _doppler_hz = _currentCommandedFreq - 4.092e6f;
 }

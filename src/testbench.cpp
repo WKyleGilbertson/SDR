@@ -74,67 +74,90 @@ static void runCodePhaseSweep(
 {
     const size_t ms_samples = meta.fs_rate / 1000;
 
-//    FILE *csv = fopen("code_phase_sweep.csv", "w");
-//    if (!csv)
-//        return;
+    FILE *csv = fopen("code_phase_sweep.csv", "w");
+    if (!csv)
+        return;
 
-    /*
     fprintf(csv,
-            "sample_offset,chip_offset,code_phase,E,P,L,dll,Pi,Pq,pll,snr\n");
-            */
+            "candidate,chip_offset,code_phase,E,P,L,dll,Pi,Pq,pll\n");
 
-    for (int sampleOffset = -96;
-         sampleOffset <= -64;
-         ++sampleOffset)
+    float centers[] = {
+        45.3125f,
+        170.3750f,
+        980.6250f,
+        base_acq.codePhase
+    };
+
+    const int sweep_ms = 20;
+
+    for (float center : centers)
     {
-        float chipOffset =
-            (float)sampleOffset / 16.0f;
+        for (int sampleOffset = -64; sampleOffset <= 64; ++sampleOffset)
+        {
+            float chipOffset = (float)sampleOffset / 16.0f;
 
-        AcqResult acq = base_acq;
+            AcqResult acq = base_acq;
+            acq.codePhase = center + chipOffset;
 
-        acq.codePhase =
-            base_acq.codePhase + chipOffset;
+            while (acq.codePhase < 0.0f)
+                acq.codePhase += 1023.0f;
 
-        while (acq.codePhase < 0.0f)
-            acq.codePhase += 1023.0f;
+            while (acq.codePhase >= 1023.0f)
+                acq.codePhase -= 1023.0f;
 
-        while (acq.codePhase >= 1023.0f)
-            acq.codePhase -= 1023.0f;
+            G2INIT sv(acq.prn, 0);
 
-        G2INIT sv(acq.prn, 0);
+            ChannelProcessor chan(
+                (double)meta.fs_rate,
+                acq,
+                sv);
 
-        ChannelProcessor chan(
-            (double)meta.fs_rate,
-            acq,
-            sv);
+            chan.setInputIsComplex(meta.input_is_complex);
+            chan.setSampleGain(8.0f);
+            chan.setLoopEnables(false, false);
 
-        chan.setInputIsComplex(
-            meta.input_is_complex);
+            double E_sum = 0.0;
+            double P_sum = 0.0;
+            double L_sum = 0.0;
+            double dll_sum = 0.0;
+            double pll_sum = 0.0;
+            int64_t Pi_sum = 0;
+            int64_t Pq_sum = 0;
 
-        CorrelatorResult r =
-            chan.Correlator(
-                samples.data(),
-                ms_samples);
+            for (int ms = 0; ms < sweep_ms; ++ms)
+            {
+                CorrelatorResult r =
+                    chan.Correlator(
+                        samples.data() + ms * ms_samples,
+                        ms_samples);
 
-        /*
-        fprintf(csv,
-                "%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.9f,%d,%d,%.9f,%.3f\n",
-                sampleOffset,
-                chipOffset,
-                acq.codePhase,
-                r.E_mag,
-                r.P_mag,
-                r.L_mag,
-                r.code_error,
-                r.Pi,
-                r.Pq,
-                r.carrier_phase_error,
-                r.snr); */
+                E_sum += r.E_mag;
+                P_sum += r.P_mag;
+                L_sum += r.L_mag;
+                dll_sum += r.code_error;
+                pll_sum += r.carrier_phase_error;
+                Pi_sum += r.Pi;
+                Pq_sum += r.Pq;
+            }
+
+            fprintf(csv,
+                    "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.9f,%lld,%lld,%.9f\n",
+                    center,
+                    chipOffset,
+                    acq.codePhase,
+                    E_sum / sweep_ms,
+                    P_sum / sweep_ms,
+                    L_sum / sweep_ms,
+                    dll_sum / sweep_ms,
+                    (long long)(Pi_sum / sweep_ms),
+                    (long long)(Pq_sum / sweep_ms),
+                    pll_sum / sweep_ms);
+        }
     }
 
-//    fclose(csv);
+    fclose(csv);
 
-//    printf("[OK] wrote code_phase_sweep.csv\n");
+    printf("[OK] wrote code_phase_sweep.csv\n");
 }
 
 int main(int argc, char **argv)
@@ -183,9 +206,11 @@ int main(int argc, char **argv)
          acq.codePhase, acq.bin, acq.snr);
 
 //  runCodePhaseSweep(meta, samples, acq);
+//  return 0;
 
   AcqResult track_acq = acq;
-  track_acq.codePhase = 170.375f;
+  //track_acq.codePhase = 170.375f;
+  track_acq.codePhase = 45.375f;
 
   printf("[TRK INIT OVERRIDE] acq code=%.4f track code=%.4f\n",
          acq.codePhase,
@@ -199,6 +224,15 @@ int main(int argc, char **argv)
       sv);
 
   chan.setInputIsComplex(meta.input_is_complex);
+  chan.setSampleGain(8.0f);
+
+  FILE *sampleDump = fopen("sample_trace.csv", "w");
+fprintf(sampleDump,
+    "sample,rot,code_phase,chip,fine,early,prompt,late,carr_phase,carr_idx,"
+    "cos,sin,raw_i,raw_q,bb_i,bb_q,prompt_i_term,prompt_q_term,"
+    "Pi_running,Pq_running,Ei_running,Li_running\n");
+
+chan.setSampleDump(sampleDump, 512);
 
   FILE *csv = fopen("replay_tracking.csv", "w");
 fprintf(csv,
@@ -239,5 +273,7 @@ fprintf(csv,
   fclose(csv);
 
   printf("[OK] wrote replay_tracking.csv using %zu ms\n", ms_count);
+  if (sampleDump)
+    fclose(sampleDump);
   return 0;
 }
