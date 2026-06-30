@@ -549,6 +549,14 @@ bool TrackingEngine::step(
       state.processor->setLoopEnables(true, true);
       CorrelatorResult res = state.processor->Correlator(ms_ptr, feed_samples);
 
+      bool badEpoch = (res.snr < 6.0f) && (std::abs(res.Pi) < 5000) &&
+        (std::abs(res.Pq) > 5000);
+
+        if (badEpoch)
+          state.badLockEpochs++;
+        else
+          state.badLockEpochs = 0;
+
       did_work = true;
 
       if (res.consumed_sample_count != feed_samples)
@@ -563,10 +571,7 @@ bool TrackingEngine::step(
 
       state.total_tracked_ms++;
 
-if (state.total_tracked_ms > 500 &&
-    res.snr < 6.0f &&
-    std::abs(res.Pi) < 5000 &&
-    std::abs(res.Pq) > 5000)
+if (state.total_tracked_ms > 1000 && state.badLockEpochs >=3)
 {
     printf("\n[LOCK LOST] PRN %d reacquiring\n", state.prn);
     activeChannels.clear();

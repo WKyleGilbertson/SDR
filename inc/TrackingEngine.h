@@ -48,6 +48,7 @@ struct ChannelState
 
     uint32_t handover_sample_tick = 0;
     uint32_t handover_unix_time = 0;
+    uint32_t badLockEpochs = 0;
 
     ChannelState(int p, double fs, const AcqResult &res, G2INIT s);
 };
