@@ -70,6 +70,13 @@ struct LoopFilter
     float omega_n;
 };
 
+enum class LoopMode
+{
+    Acquisition,
+    PullIn,
+    Tracking
+};
+
 struct Accumulators
 {
     int32_t Ei, Eq, Pi, Pq, Li, Lq, SEi, SEq, SLi, SLq;
@@ -177,10 +184,17 @@ private:
     float _sampleGain = 4.0f;
     void resetAccumulators(Accumulators &acc);
     void calculateSNR(Accumulators &acc, float &snr);
+    void setLoopMode(LoopMode mode);
+    void calculateLoopCoefficients( LoopFilter &lf,
+        float Bn   = -1.0f, float zeta = -1.0f, float gain = -1.0f);
     // Filter Coefficients
     LoopFilter _codeLF, _carrLF;
+    uint32_t _trackingEpochs = 0;
+    uint32_t _pllHoldoffEpochs = 0;
+    uint32_t _pllGuardTrips = 0;
     float _fs;
     int _prn;
+    float _initialDopplerHz = 0.0f;
     float _doppler_hz;
     float _code_phase;
     float _initialCodePhase;

@@ -563,6 +563,17 @@ bool TrackingEngine::step(
 
       state.total_tracked_ms++;
 
+if (state.total_tracked_ms > 500 &&
+    res.snr < 6.0f &&
+    std::abs(res.Pi) < 5000 &&
+    std::abs(res.Pq) > 5000)
+{
+    printf("\n[LOCK LOST] PRN %d reacquiring\n", state.prn);
+    activeChannels.clear();
+    acq_needed = true;
+    return did_work;
+}
+
       state.last_snr = res.snr;
       state.last_doppler_hz = res.doppler_hz;
       state.last_code_phase = res.code_phase;

@@ -121,10 +121,52 @@ void ChannelProcessor::calculateSNR(Accumulators &acc, float &snr)
     }
 }
 
+void ChannelProcessor::calculateLoopCoefficients(
+    LoopFilter &lf, float Bn, float zeta, float gain)
+{
+    if (Bn > 0.0f)
+        lf.Bn = Bn;
+    if (zeta > 0.0f)
+        lf.zeta = zeta;
+    if (gain > 0.0f)
+        lf.gain = gain;
+
+    lf.omega_n = lf.Bn * 8.0f * lf.zeta /
+                 (4.0f * lf.zeta * lf.zeta + 1.0f);
+
+    lf.tau1 = lf.gain / (lf.omega_n * lf.omega_n);
+    lf.tau2 = 2.0f * lf.zeta / lf.omega_n;
+}
+
+void ChannelProcessor::setLoopMode(LoopMode mode)
+{
+    switch (mode)
+    {
+    case LoopMode::Acquisition:
+        calculateLoopCoefficients(_carrLF, 40.0f, 0.707f, 1.0f);
+        calculateLoopCoefficients(_codeLF, 20.0f, 0.707f, 1.0f);
+        if (_verboseInit)
+            fprintf(stdout, "\n[LOOPS] Acquisition\n");
+        break;
+
+    case LoopMode::PullIn:
+        calculateLoopCoefficients(_carrLF, 25.0f, 0.707f, 1.0f);
+        calculateLoopCoefficients(_codeLF, 10.0f, 0.707f, 1.0f);
+        fprintf(stdout, "\n[LOOPS] Pull-In\n");
+        break;
+
+    case LoopMode::Tracking:
+        calculateLoopCoefficients(_carrLF, 15.0f, 0.707f, 1.0f);
+        calculateLoopCoefficients(_codeLF, 3.0f, 0.707f, 1.0f);
+        fprintf(stdout, "\n[LOOPS] Tracking");
+        break;
+    }
+}
+
 ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
-         G2INIT &sv, bool verboseInit)
+                                   G2INIT &sv, bool verboseInit)
     : _fs(fs_rate), _carrNco(8, (float)fs_rate), _codeNco(4, (float)fs_rate),
-     _m_sv(sv), _verboseInit(verboseInit)
+      _m_sv(sv), _verboseInit(verboseInit)
 {
     _carrFreqBasis = 4.092e6f + init.bin * 500.0f;
     _codeFreqBasis = 1.023e6f;
@@ -135,7 +177,8 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
     _isLocked = false;
     _samplesPerMs = (size_t)(_fs / 1000.0);
     _prn = init.prn;
-    _doppler_hz = init.bin * 500.0f;
+    _initialDopplerHz = init.bin * 500.0f;
+    _doppler_hz = _initialDopplerHz;
     _oldCarrNco = 0.0f;
     _oldCarrError = 0.0f;
     //_oldCarrNco = _carrFreqBasis - (float)_doppler_hz;
@@ -200,25 +243,7 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
     for (int i = 0; i < 1023; i++)
         _ca_replica[i] = (int8_t)_m_sv.CODE[i];
 
-    //_carrLF.Bn = 10.0f;
-    //_carrLF.Bn = 25.0f;
-    _carrLF.Bn = 40.0f;
-    _carrLF.zeta = 0.707f;
-    //_carrLF.zeta = 1.1f;
-    //_carrLF.gain = 0.60f;
-    _carrLF.gain = 1.0f;
-    _carrLF.omega_n = _carrLF.Bn * 8.0f * _carrLF.zeta / (4.0f * _carrLF.zeta * _carrLF.zeta + 1.0f);
-    _carrLF.tau1 = _carrLF.gain / (_carrLF.omega_n * _carrLF.omega_n);
-    _carrLF.tau2 = 2.0f * _carrLF.zeta / _carrLF.omega_n;
-
-    _codeLF.Bn = 20.0f;
-    //_codeLF.Bn = 10.0f;
-    //_codeLF.Bn = 1.0f;
-    _codeLF.zeta = 0.707f;
-    _codeLF.gain = 1.0f;
-    _codeLF.omega_n = _codeLF.Bn * 8.0f * _codeLF.zeta / (4.0f * _codeLF.zeta * _codeLF.zeta + 1.0f);
-    _codeLF.tau1 = _codeLF.gain / (_codeLF.omega_n * _codeLF.omega_n);
-    _codeLF.tau2 = 2.0f * _codeLF.zeta / _codeLF.omega_n;
+    setLoopMode(LoopMode::Acquisition);
 
     if (_verboseInit)
     {
@@ -429,16 +454,66 @@ TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
 void ChannelProcessor::updateCarrierLoop(
     const TrackingMetrics &m)
 {
+    if (_pllHoldoffEpochs > 0)
+    {
+        _pllHoldoffEpochs--;
+
+        _currentCommandedFreq = _carrFreqBasis;
+        _carrNco.SetFrequency(_currentCommandedFreq);
+
+        _doppler_hz = _initialDopplerHz;
+        return;
+    }
+
+    if (_snr < 8.0f)
+    {
+        return;
+    }
+
     float kp = _carrLF.tau2 / _carrLF.tau1;
     float ki = m.dynamicT / _carrLF.tau1;
+
     _oldCarrNco += ki * m.carrError;
+
     float carrNcoUpdate =
         kp * m.carrError + _oldCarrNco;
+
     _oldCarrError = m.carrError;
+
     _currentCommandedFreq =
         _carrFreqBasis - carrNcoUpdate;
+
     _carrNco.SetFrequency(_currentCommandedFreq);
+
     _doppler_hz = _currentCommandedFreq - 4.092e6f;
+
+    float dopplerDelta = _doppler_hz - _initialDopplerHz;
+
+    if (fabsf(dopplerDelta) > 1000.0f)
+    {
+        _pllGuardTrips++;
+        _pllHoldoffEpochs = 50;
+
+        if(_pllGuardTrips >= 3)
+        {
+            _isLocked = false;
+            _enable_pll = false;
+        }
+
+        printf("\n[PLL GUARD] PRN %d doppler %.1f initial %.1f delta %.1f\n",
+               _prn,
+               _doppler_hz,
+               _initialDopplerHz,
+               dopplerDelta);
+
+        _currentCommandedFreq = _carrFreqBasis;
+        _carrNco.SetFrequency(_currentCommandedFreq);
+
+        _doppler_hz = _initialDopplerHz;
+        _oldCarrNco = 0.0f;
+        _oldCarrError = 0.0f;
+        return;
+    }
     /*    float carrNcoUpdate = _oldCarrNco + (_carrLF.tau2 / _carrLF.tau1) *
                                                 (m.carrError - _oldCarrError) *
                                                 (m.dynamicT / _carrLF.tau1);
