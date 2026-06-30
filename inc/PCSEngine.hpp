@@ -70,6 +70,13 @@ public:
     AcqResult search(int prn, const std::vector<kiss_fft_cpx> &rawData,
                      float centerFreq, int binRange, float binWidth,
                      uint32_t sampleTick = 0);
+    void dumpLocalCorrelation(
+        int prn,
+        const std::vector<kiss_fft_cpx> &rawData,
+        float carrierFreq,
+        int centerPeakIndex,
+        int radius,
+        const char *csvPath);
 };
 
 #endif

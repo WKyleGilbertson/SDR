@@ -100,8 +100,8 @@ uint32_t NCO::clk(void)
             m_rotations = 0;
     }
 
-    EPLreg <<= 1;
-    EPLreg |= (static_cast<uint64_t>(CACODE[m_rotations]) & 0x01ULL);
+     EPLreg <<= 1;
+     EPLreg |= (static_cast<uint64_t>(CACODE[m_rotations]) & 0x01ULL);
 
     Early = ((EPLreg & E_mask) != 0) ? 1 : -1;
     Prompt = ((EPLreg & P_mask) != 0) ? 1 : -1;

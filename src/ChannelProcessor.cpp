@@ -15,7 +15,7 @@ void ChannelProcessor::enableSampleTrace(
     if (_sampleDump)
     {
         fprintf(_sampleDump,
-            "sample,rot,code_phase,...\n");
+                "sample,rot,code_phase,...\n");
 
         _sampleDumpRemaining = samples;
     }
@@ -35,30 +35,30 @@ void ChannelProcessor::dumpSampleTrace(
         return;
 
     fprintf(_sampleDump,
-        "%llu,%u,%.6f,%u,%u,%d,%d,%d,%u,%u,%.9f,%.9f,"
-        "%d,%d,%.6f,%.6f,%d,%d,%d,%d,%d,%d\n",
-        (unsigned long long)_sampleCounter,
-        _codeNco.getRotations(),
-        _codeNco.getCodePhase(),
-        _codeNco.getRotations(),
-        _codeNco.getFinePhase16(),
-        _codeNco.Early,
-        _codeNco.Prompt,
-        _codeNco.Late,
-        _carrNco.getPhase(),
-        carrIdx,
-        c,
-        s,
-        sample.i,
-        sample.q,
-        bb_i,
-        bb_q,
-        prompt_i_term,
-        prompt_q_term,
-        _epochAcc.Pi,
-        _epochAcc.Pq,
-        _epochAcc.Ei,
-        _epochAcc.Li);
+            "%llu,%u,%.6f,%u,%u,%d,%d,%d,%u,%u,%.9f,%.9f,"
+            "%d,%d,%.6f,%.6f,%d,%d,%d,%d,%d,%d\n",
+            (unsigned long long)_sampleCounter,
+            _codeNco.getRotations(),
+            _codeNco.getCodePhase(),
+            _codeNco.getRotations(),
+            _codeNco.getFinePhase16(),
+            _codeNco.Early,
+            _codeNco.Prompt,
+            _codeNco.Late,
+            _carrNco.getPhase(),
+            carrIdx,
+            c,
+            s,
+            sample.i,
+            sample.q,
+            bb_i,
+            bb_q,
+            prompt_i_term,
+            prompt_q_term,
+            _epochAcc.Pi,
+            _epochAcc.Pq,
+            _epochAcc.Ei,
+            _epochAcc.Li);
 
     _sampleDumpRemaining--;
 }
@@ -121,8 +121,10 @@ void ChannelProcessor::calculateSNR(Accumulators &acc, float &snr)
     }
 }
 
-ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT &sv)
-    : _fs(fs_rate), _carrNco(8, (float)fs_rate), _codeNco(4, (float)fs_rate), _m_sv(sv)
+ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
+         G2INIT &sv, bool verboseInit)
+    : _fs(fs_rate), _carrNco(8, (float)fs_rate), _codeNco(4, (float)fs_rate),
+     _m_sv(sv), _verboseInit(verboseInit)
 {
     _carrFreqBasis = 4.092e6f + init.bin * 500.0f;
     _codeFreqBasis = 1.023e6f;
@@ -167,7 +169,7 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
 
     float spc = (float)_fs / 1023000.0f;
     int chipTravelDelay = 0;
-    //int chipTravelDelay = (int)std::round(32.0f / spc);
+    // int chipTravelDelay = (int)std::round(32.0f / spc);
 
     _continuousTrackedChips = _initialCodePhase;
     _absoluteBaseRotations = 0;
@@ -217,13 +219,13 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT
     _codeLF.omega_n = _codeLF.Bn * 8.0f * _codeLF.zeta / (4.0f * _codeLF.zeta * _codeLF.zeta + 1.0f);
     _codeLF.tau1 = _codeLF.gain / (_codeLF.omega_n * _codeLF.omega_n);
     _codeLF.tau2 = 2.0f * _codeLF.zeta / _codeLF.omega_n;
- printf("[CHAN INIT] PRN %3d code=%8.4f %4u_%.2u F:%.1f dF: %7.1f\n",
-       init.prn,
-       init.codePhase,
-       _codeNco.getRotations(),
-       _codeNco.getFinePhase16(),
-       _currentCommandedFreq,
-       _doppler_hz);
+
+    if (_verboseInit)
+    {
+        printf("[CHAN INIT] PRN %3d code=%8.4f %4u_%.2u F:%.1f dF: %7.1f\n",
+               init.prn, init.codePhase, _codeNco.getRotations(),
+               _codeNco.getFinePhase16(), _currentCommandedFreq, _doppler_hz);
+    }
 }
 
 ChannelProcessor::~ChannelProcessor()
@@ -237,17 +239,20 @@ void ChannelProcessor::runAccumulation(
     size_t availableSamples,
     CorrelatorResult &res)
 {
+    int rotation_changes = 0;
+    int sample_ticks = 0;
+    uint16_t last_rot = _codeNco.getRotations();
     for (size_t i = 0; i < availableSamples; ++i)
     {
         _sampleCounter++;
 
-//        uint32_t carrIdx = _carrNco.clk();
+        //        uint32_t carrIdx = _carrNco.clk();
         uint16_t prev_rotations = _codeNco.getRotations();
         float prev_code_phase = _codeNco.getCodePhase();
 
-        uint32_t carrIdx = _carrNco.getPhase() >> (32 -8);
+        uint32_t carrIdx = _carrNco.getPhase() >> (32 - 8);
 
-//        _codeNco.clk();
+        //        _codeNco.clk();
 
         float s = _carrNco.sine(carrIdx) * 8.0f;
         float c = _carrNco.cosine(carrIdx) * 8.0f;
@@ -293,23 +298,32 @@ void ChannelProcessor::runAccumulation(
         _carrNco.clk();
         _codeNco.clk();
 
-dumpSampleTrace(samples[i], carrIdx, c, s, bb_i, bb_q, prompt_i_term, prompt_q_term);  
+        sample_ticks++;
+
+        uint16_t now_rot = _codeNco.getRotations();
+        if (now_rot != last_rot)
+        {
+            rotation_changes++;
+            last_rot = now_rot;
+        }
+
+        dumpSampleTrace(samples[i], carrIdx, c, s, bb_i, bb_q, prompt_i_term, prompt_q_term);
 
         if (_codeNco.getRotations() < prev_rotations)
         {
             TrackingMetrics m =
                 computeEpochDiscriminators(_epochAcc, _epochSampleCount);
 
-      float carrier_before = _currentCommandedFreq;
-    float old_nco_before = _oldCarrNco;
-    float old_err_before = _oldCarrError;
+            float carrier_before = _currentCommandedFreq;
+            float old_nco_before = _oldCarrNco;
+            float old_err_before = _oldCarrError;
 
-    static int pll_print_count = 0;              
+            static int pll_print_count = 0;
 
             if (_enable_pll)
                 updateCarrierLoop(m);
 
-      float carrier_after = _currentCommandedFreq;
+            float carrier_after = _currentCommandedFreq;
 
             if (_enable_dll)
                 updateCodeLoop(m);
@@ -375,18 +389,18 @@ TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
     m.Late_Q = (float)acc.Lq * norm;
     m.dynamicT = (float)sampleCount / (float)_fs;
     m.P2 = m.I * m.I + m.Q * m.Q;
-//        float sign_I = (m.I >= 0.0f) ? 1.0f : -1.0f;
-//        float clean_I = m.I * sign_I;
-//        float clean_Q = m.Q * sign_I;
+    //        float sign_I = (m.I >= 0.0f) ? 1.0f : -1.0f;
+    //        float clean_I = m.I * sign_I;
+    //        float clean_Q = m.Q * sign_I;
     float raw_angular_error =
         (fabsf(m.I) > 1e-6f)
             ? atanf(m.Q / m.I)
             : 0.0f;
-/*    (clean_I > 1e-6f)
-        ? atanf(clean_Q / clean_I)
-        : 0.0f; */
+    /*    (clean_I > 1e-6f)
+            ? atanf(clean_Q / clean_I)
+            : 0.0f; */
 
-    //m.carrError = raw_angular_error / (2.0f * (float)M_PI);
+    // m.carrError = raw_angular_error / (2.0f * (float)M_PI);
     m.carrError = raw_angular_error;
 
     if (fabs(m.carrError - _oldCarrError) > 0.5f)
@@ -425,14 +439,14 @@ void ChannelProcessor::updateCarrierLoop(
         _carrFreqBasis - carrNcoUpdate;
     _carrNco.SetFrequency(_currentCommandedFreq);
     _doppler_hz = _currentCommandedFreq - 4.092e6f;
-/*    float carrNcoUpdate = _oldCarrNco + (_carrLF.tau2 / _carrLF.tau1) *
-                                            (m.carrError - _oldCarrError) *
-                                            (m.dynamicT / _carrLF.tau1);
-    _oldCarrNco = carrNcoUpdate;
-    _oldCarrError = m.carrError;
-    _currentCommandedFreq = _carrFreqBasis + carrNcoUpdate;
-    _carrNco.SetFrequency(_currentCommandedFreq);
-    _doppler_hz = _currentCommandedFreq - 4.092e6f;*/
+    /*    float carrNcoUpdate = _oldCarrNco + (_carrLF.tau2 / _carrLF.tau1) *
+                                                (m.carrError - _oldCarrError) *
+                                                (m.dynamicT / _carrLF.tau1);
+        _oldCarrNco = carrNcoUpdate;
+        _oldCarrError = m.carrError;
+        _currentCommandedFreq = _carrFreqBasis + carrNcoUpdate;
+        _carrNco.SetFrequency(_currentCommandedFreq);
+        _doppler_hz = _currentCommandedFreq - 4.092e6f;*/
 }
 
 void ChannelProcessor::updateCodeLoop(

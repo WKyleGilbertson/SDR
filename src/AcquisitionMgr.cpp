@@ -1,8 +1,8 @@
 #include "AcquisitionMgr.hpp"
 
 std::vector<AcqResult> AcquisitionMgr::run(
-    const RFE_Header_t& meta,
-    RawSample* samples,
+    const RFE_Header_t &meta,
+    RawSample *samples,
     size_t sample_count)
 {
     std::vector<AcqResult> results;
@@ -28,16 +28,16 @@ std::vector<AcqResult> AcquisitionMgr::run(
 
     for (int ms = 0; ms < NUM_MS; ++ms)
     {
-        kiss_fft_cpx* dst =
+        kiss_fft_cpx *dst =
             &aligned_data[ms * FFT_SIZE];
 
-        RawSample* src =
+        RawSample *src =
             &samples[ms * samples_per_ms];
 
         for (size_t i = 0; i < samples_per_ms; ++i)
         {
-            dst[i].r = (kiss_fft_scalar)src[i].i<<ACQ_SAMPLE_SHIFT;
-            dst[i].i = (kiss_fft_scalar)src[i].q<<ACQ_SAMPLE_SHIFT;
+            dst[i].r = (kiss_fft_scalar)src[i].i << ACQ_SAMPLE_SHIFT;
+            dst[i].i = (kiss_fft_scalar)src[i].q << ACQ_SAMPLE_SHIFT;
         }
 
         // remaining FFT_SIZE - samples_per_ms stays zero-padded
@@ -97,7 +97,10 @@ AcqResult AcquisitionMgr::runSingle(
     const RFE_Header_t &meta,
     RawSample *samples,
     size_t sample_count,
-    int prn)
+    int prn,
+    float centerFreq,
+    int binRange,
+    float binWidth)
 {
     AcqResult empty = {};
     empty.prn = prn;
@@ -132,8 +135,8 @@ AcqResult AcquisitionMgr::runSingle(
 
         for (size_t i = 0; i < samples_per_ms; ++i)
         {
-            dst[i].r = (kiss_fft_scalar)src[i].i<<ACQ_SAMPLE_SHIFT;
-            dst[i].i = (kiss_fft_scalar)src[i].q<<ACQ_SAMPLE_SHIFT;
+            dst[i].r = (kiss_fft_scalar)src[i].i << ACQ_SAMPLE_SHIFT;
+            dst[i].i = (kiss_fft_scalar)src[i].q << ACQ_SAMPLE_SHIFT;
         }
     }
 
@@ -144,14 +147,44 @@ AcqResult AcquisitionMgr::runSingle(
         m_pcs.search(
             prn,
             aligned_data,
-            4.092e6f,
-            20,
-            500.0f,
+            centerFreq,
+            binRange,
+            binWidth,
             aligned_anchor);
+
+  if (binRange == 2 && binWidth == 50.0f)
+{
+    float carrierFreq =
+        centerFreq + res.bin * binWidth;
+
+    m_pcs.dumpLocalCorrelation(
+        prn,
+        aligned_data,
+        carrierFreq,
+        res.peakIndex,
+        64,
+        "pcs_local_refine.csv");
+}  
 
     res.codePhase =
         (float)res.peakIndex /
         samples_per_chip;
 
     return res;
+}
+
+AcqResult AcquisitionMgr::runSingle(
+    const RFE_Header_t &meta,
+    RawSample *samples,
+    size_t sample_count,
+    int prn)
+{
+    return runSingle(
+        meta,
+        samples,
+        sample_count,
+        prn,
+        4.092e6f,
+        20,
+        500.0f);
 }

@@ -79,7 +79,7 @@ void printCorrelatorData(FILE * fp, CorrelatorResult &res)
     char symChar = (res.Pi > 0.0) ? '#' : '-';
     double mag = sqrt(res.Pi * res.Pi + res.Pq * res.Pq);
 
-    fprintf(fp, "[%c%c] SNR:%4.1f | dF:%8.1f | Code:%7.2f | Err:%5.2f | Pi: %6.0e | Pq: %6.0e",
+    fprintf(fp, "[%c%c] SNR:%4.1f | dF:%8.1f | Code:%7.2f | Err:%5.2f | Pi: %8d | Pq: %8d",
            lockChar,                // L/U status
            symChar,                 // #/- symbol representation
            res.snr,                 // Tracked signal strength

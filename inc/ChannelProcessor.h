@@ -109,7 +109,8 @@ public:
                          _codeNco(0, 16368000.0f), _code_phase(0), _m_sv(0, 0),
                          _sampleCounter(0) {}
     // The real constructor we use after lock
-    ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT &sv);
+    ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT &sv,
+         bool verboseInit = true);
     ~ChannelProcessor();
     CorrelatorResult Correlator(const RawSample *samples, size_t availableSamples);
     int getPRN() const { return _prn; }
@@ -129,6 +130,7 @@ public:
         float bb_q,
         int32_t prompt_i_term,
         int32_t prompt_q_term);
+    void setVerboseInit(bool enabled) {_verboseInit = enabled;}
 
 private:
     void runAccumulation(
@@ -152,6 +154,7 @@ private:
         CorrelatorResult &res,
         const TrackingMetrics &m,
         float boundary_code_phase);
+
     NCO _carrNco; // Carrier NCO (Initial ~4.092 MHz)
     NCO _codeNco; // Code NCO (Initial ~1.023 MHz)
     G2INIT _m_sv;
@@ -195,4 +198,5 @@ private:
     bool _fixed_nco_debug = false;
     FILE * _sampleDump = nullptr;
     int _sampleDumpRemaining = 0;
+    bool _verboseInit = true;
 };

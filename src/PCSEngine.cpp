@@ -82,6 +82,10 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
     bestResult.sampleTick = sampleTick;
     bestResult.codePhase = 0.0f;
 
+    int bestBinPeakIndex = 0;
+    float bestBinNorm = 1.0f;
+    std::vector<float> bestBinAccumMag;
+
     int numBlocks = (int)(rawData.size() / N);
     if (numBlocks == 0)
         return bestResult;
@@ -123,7 +127,7 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
 
             // Stage 3: Frequency-domain correlation
             complex_mix(m_workspace.data(), m_workspace.data(),
-                      currentCodeFft.data(), N, FREQ_CORR_SHIFT);
+                        currentCodeFft.data(), N, FREQ_CORR_SHIFT);
 
             // Stage 4: Inverse FFT to get correlation magnitudes
             kiss_fft(m_cfg_inv, m_workspace.data(), m_workspace.data());
@@ -168,17 +172,17 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
             float peakI = (float)m_workspace[peakIndex].i;
             // atan2 returns radians (-pi to pi)
             float phase = std::atan2f(peakI, peakR);
-            
-    float codePhaseA =
-        (float)peakIndex / 16.0f;
 
-    float codePhaseB =
-        (float)((16368 - peakIndex) % 16368) / 16.0f;
+            float codePhaseA =
+                (float)peakIndex / 16.0f;
 
-    printf(
-        "[PCS PEAK] PRN=%d bin=%d peak=%d "
-        "A=%.4f B=%.4f SNR=%.1f\n",
-        prn, bin, peakIndex, codePhaseA, codePhaseB, snr);
+            float codePhaseB =
+                (float)((16368 - peakIndex) % 16368) / 16.0f;
+
+            printf(
+                "[PCS PEAK] PRN=%d bin=%d peak=%d "
+                "A=%.4f B=%.4f SNR=%.1f\n",
+                prn, bin, peakIndex, codePhaseA, codePhaseB, snr);
 
             // 2. Update bestResult assignment
             bestResult.bin = bin;
@@ -186,7 +190,126 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
             bestResult.peakMagnitude = maxMag;
             bestResult.snr = snr;
             bestResult.phase = phase;
-        }  
+            bestBinPeakIndex = peakIndex;
+            bestBinNorm = norm;
+            bestBinAccumMag = m_accumulatedMag;
+        }
+    }
+    if (!bestBinAccumMag.empty())
+    {
+        /*printf("[PCS WINDOW] PRN=%d bin=%d peak=%d\n", prn, bestResult.bin,
+               bestBinPeakIndex); */
+
+        for (int k = -8; k <= 8; ++k)
+        {
+            int idx = bestBinPeakIndex + k;
+
+            while (idx < 0)
+                idx += N;
+            while (idx >= N)
+                idx -= N;
+
+            float mag = bestBinAccumMag[idx] * bestBinNorm;
+
+            /*printf("[PCS WIN] idx=%5d off=%+3d A=%8.4f B16368=%8.4f B16384=%8.4f mag=%.6f\n",
+                   idx, k, (float)idx / 16.0f, (float)((16368 - idx) % 16368) / 16.0f,
+                   (float)((16384 - idx) % 16384) / 16.0f, mag); */
+        }
     }
     return bestResult;
+}
+
+void PCSEngine::dumpLocalCorrelation(
+    int prn,
+    const std::vector<kiss_fft_cpx> &rawData,
+    float carrierFreq,
+    int centerPeakIndex,
+    int radius,
+    const char *csvPath)
+{
+    int numBlocks = (int)(rawData.size() / N);
+    if (numBlocks == 0)
+        return;
+
+    initPrn(prn);
+    const std::vector<kiss_fft_cpx> &currentCodeFft = codeFfts[prn];
+
+    std::fill(m_accumulatedMag.begin(), m_accumulatedMag.end(), 0.0f);
+
+    m_nco.SetFrequency(carrierFreq);
+
+    for (size_t idx = 0; idx < 16368; idx++)
+    {
+        uint32_t ncoIdx = m_nco.clk();
+        m_ncoBuffer[idx].r = static_cast<int16_t>(m_nco.cosine(ncoIdx) * CODE_SCALE);
+        m_ncoBuffer[idx].i = static_cast<int16_t>(m_nco.sine(ncoIdx) * CODE_SCALE);
+    }
+
+    for (size_t idx = 16368; idx < N; idx++)
+    {
+        m_ncoBuffer[idx].r = 0;
+        m_ncoBuffer[idx].i = 0;
+    }
+
+    for (int b = 0; b < numBlocks; b++)
+    {
+        const kiss_fft_cpx *blockStart = &rawData[b * N];
+
+        complex_mix(m_workspace.data(), blockStart,
+                    m_ncoBuffer.data(), N, TIME_MIX_SHIFT);
+
+        kiss_fft(m_cfg_fwd, m_workspace.data(), m_workspace.data());
+
+        complex_mix(m_workspace.data(), m_workspace.data(),
+                    currentCodeFft.data(), N, FREQ_CORR_SHIFT);
+
+        kiss_fft(m_cfg_inv, m_workspace.data(), m_workspace.data());
+
+        for (size_t idx = 0; idx < N; idx++)
+        {
+            float r = (float)m_workspace[idx].r;
+            float i = (float)m_workspace[idx].i;
+            m_accumulatedMag[idx] += std::sqrtf(r * r + i * i);
+        }
+    }
+
+    FILE *csv = fopen(csvPath, "w");
+    if (!csv)
+        return;
+
+    fprintf(csv,
+            "prn,center_peak,offset,test_peak_index,pcsA,pcsB16368,pcsB16384,mag\n");
+
+    const float norm = 1.0f / (float)(N * numBlocks);
+
+    for (int offset = -radius; offset <= radius; ++offset)
+    {
+        int idx = centerPeakIndex + offset;
+
+        while (idx < 0)
+            idx += N;
+        while (idx >= N)
+            idx -= N;
+
+        float mag = m_accumulatedMag[idx] * norm;
+
+        float pcsA = (float)idx / 16.0f;
+        float pcsB16368 =
+            (float)((16368 - idx) % 16368) / 16.0f;
+        float pcsB16384 =
+            (float)((16384 - idx) % 16384) / 16.0f;
+
+        fprintf(csv,
+                "%d,%d,%d,%d,%.6f,%.6f,%.6f,%.9f\n",
+                prn,
+                centerPeakIndex,
+                offset,
+                idx,
+                pcsA,
+                pcsB16368,
+                pcsB16384,
+                mag);
+    }
+
+    fclose(csv);
 }

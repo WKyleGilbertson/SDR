@@ -72,124 +72,126 @@ static void runCodePhaseSweep(
     const std::vector<RawSample> &samples,
     const AcqResult &base_acq)
 {
-    const size_t ms_samples = meta.fs_rate / 1000;
+  const size_t ms_samples = meta.fs_rate / 1000;
 
-    FILE *csv = fopen("code_phase_sweep.csv", "w");
-    if (!csv)
-        return;
+  FILE *csv = fopen("code_phase_sweep.csv", "w");
+  if (!csv)
+    return;
 
-    fprintf(csv,
-            "candidate,chip_offset,code_phase,E,P,L,dll,Pi,Pq,pll\n");
+  fprintf(csv,
+          "candidate,chip_offset,code_phase,E,P,L,dll,Pi,Pq,pll\n");
 
-    float centers[] = {
-        45.3125f,
-        170.3750f,
-        980.6250f,
-        base_acq.codePhase
-    };
+  float centers[] = {
+      45.3125f,
+      170.3750f,
+      980.6250f,
+      base_acq.codePhase};
 
-    const int sweep_ms = 20;
+  const int sweep_ms = 20;
 
-    for (float center : centers)
+  for (float center : centers)
+  {
+    for (int sampleOffset = -64; sampleOffset <= 64; ++sampleOffset)
     {
-        for (int sampleOffset = -64; sampleOffset <= 64; ++sampleOffset)
-        {
-            float chipOffset = (float)sampleOffset / 16.0f;
+      float chipOffset = (float)sampleOffset / 16.0f;
 
-            AcqResult acq = base_acq;
-            acq.codePhase = center + chipOffset;
+      AcqResult acq = base_acq;
+      acq.codePhase = center + chipOffset;
 
-            while (acq.codePhase < 0.0f)
-                acq.codePhase += 1023.0f;
+      while (acq.codePhase < 0.0f)
+        acq.codePhase += 1023.0f;
 
-            while (acq.codePhase >= 1023.0f)
-                acq.codePhase -= 1023.0f;
+      while (acq.codePhase >= 1023.0f)
+        acq.codePhase -= 1023.0f;
 
-            G2INIT sv(acq.prn, 0);
+      G2INIT sv(acq.prn, 0);
 
-            ChannelProcessor chan(
-                (double)meta.fs_rate,
-                acq,
-                sv);
+      ChannelProcessor chan(
+          (double)meta.fs_rate,
+          acq,
+          sv);
 
-            chan.setInputIsComplex(meta.input_is_complex);
-            chan.setSampleGain(8.0f);
-            chan.setLoopEnables(false, false);
+      chan.setInputIsComplex(meta.input_is_complex);
+      chan.setSampleGain(8.0f);
+      chan.setLoopEnables(false, false);
 
-            double E_sum = 0.0;
-            double P_sum = 0.0;
-            double L_sum = 0.0;
-            double dll_sum = 0.0;
-            double pll_sum = 0.0;
-            int64_t Pi_sum = 0;
-            int64_t Pq_sum = 0;
+      double E_sum = 0.0;
+      double P_sum = 0.0;
+      double L_sum = 0.0;
+      double dll_sum = 0.0;
+      double pll_sum = 0.0;
+      int64_t Pi_sum = 0;
+      int64_t Pq_sum = 0;
 
-            for (int ms = 0; ms < sweep_ms; ++ms)
-            {
-                CorrelatorResult r =
-                    chan.Correlator(
-                        samples.data() + ms * ms_samples,
-                        ms_samples);
+      for (int ms = 0; ms < sweep_ms; ++ms)
+      {
+        CorrelatorResult r =
+            chan.Correlator(
+                samples.data() + ms * ms_samples,
+                ms_samples);
 
-                E_sum += r.E_mag;
-                P_sum += r.P_mag;
-                L_sum += r.L_mag;
-                dll_sum += r.code_error;
-                pll_sum += r.carrier_phase_error;
-                Pi_sum += r.Pi;
-                Pq_sum += r.Pq;
-            }
+        E_sum += r.E_mag;
+        P_sum += r.P_mag;
+        L_sum += r.L_mag;
+        dll_sum += r.code_error;
+        pll_sum += r.carrier_phase_error;
+        Pi_sum += r.Pi;
+        Pq_sum += r.Pq;
+      }
 
-            fprintf(csv,
-                    "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.9f,%lld,%lld,%.9f\n",
-                    center,
-                    chipOffset,
-                    acq.codePhase,
-                    E_sum / sweep_ms,
-                    P_sum / sweep_ms,
-                    L_sum / sweep_ms,
-                    dll_sum / sweep_ms,
-                    (long long)(Pi_sum / sweep_ms),
-                    (long long)(Pq_sum / sweep_ms),
-                    pll_sum / sweep_ms);
-        }
+      fprintf(csv,
+              "%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.9f,%lld,%lld,%.9f\n",
+              center,
+              chipOffset,
+              acq.codePhase,
+              E_sum / sweep_ms,
+              P_sum / sweep_ms,
+              L_sum / sweep_ms,
+              dll_sum / sweep_ms,
+              (long long)(Pi_sum / sweep_ms),
+              (long long)(Pq_sum / sweep_ms),
+              pll_sum / sweep_ms);
     }
+  }
 
-    fclose(csv);
+  fclose(csv);
 
-    printf("[OK] wrote code_phase_sweep.csv\n");
+  printf("[OK] wrote code_phase_sweep.csv\n");
 }
 
-void writeReplayTrackingHeader(FILE * csv) {
-fprintf(csv,
-    "ms,sample_count,code_phase,doppler,carrier_nco_hz,code_nco_hz,"
-    "Ei,Eq,Pi,Pq,Li,Lq,"
-    "E,P,L,pll,dll,snr,is_locked\n");};
-
-void writeReplayTrackingRow(FILE * csv, size_t ms, CorrelatorResult r) {
+void writeReplayTrackingHeader(FILE *csv)
+{
   fprintf(csv,
-    "%zu,%zu,%.6f,%.3f,%.3f,%.3f,"
-    "%d,%d,%d,%d,%d,%d,"
-    "%.3f,%.3f,%.3f,%.9f,%.9f,%.3f,%d\n",
-    ms,
-    r.epoch_sample_count,
-    r.code_phase,
-    r.doppler_hz,
-    r.carrier_nco_hz,
-    r.code_nco_hz,
-    r.Ei,
-    r.Eq,
-    r.Pi,
-    r.Pq,
-    r.Li,
-    r.Lq,
-    r.E_mag,
-    r.P_mag,
-    r.L_mag,
-    r.carrier_phase_error,
-    r.code_error,
-    r.snr,
-    r.is_locked ? 1 : 0);
+          "ms,sample_count,code_phase,doppler,carrier_nco_hz,code_nco_hz,"
+          "Ei,Eq,Pi,Pq,Li,Lq,"
+          "E,P,L,pll,dll,snr,is_locked\n");
+};
+
+void writeReplayTrackingRow(FILE *csv, size_t ms, CorrelatorResult r)
+{
+  fprintf(csv,
+          "%zu,%zu,%.6f,%.3f,%.3f,%.3f,"
+          "%d,%d,%d,%d,%d,%d,"
+          "%.3f,%.3f,%.3f,%.9f,%.9f,%.3f,%d\n",
+          ms,
+          r.epoch_sample_count,
+          r.code_phase,
+          r.doppler_hz,
+          r.carrier_nco_hz,
+          r.code_nco_hz,
+          r.Ei,
+          r.Eq,
+          r.Pi,
+          r.Pq,
+          r.Li,
+          r.Lq,
+          r.E_mag,
+          r.P_mag,
+          r.L_mag,
+          r.carrier_phase_error,
+          r.code_error,
+          r.snr,
+          r.is_locked ? 1 : 0);
 };
 
 /*
@@ -198,18 +200,86 @@ writeHandoffRow(csv, acq, track_acq, optional_refined_acq);
 */
 float pcsToTrackerCodePhase(float pcsCode)
 {
-    // EPL reg Prompt is bit 32 which is 16 samples or 2 chips
-    // FFT size is 16384 not 16386 which is off by 16 or 1 chip
-    // Those two together are 3 chips
-    float trackerCode = 1023.0f - pcsCode + 3.0f;
+  // EPL reg Prompt is bit 32 which is 16 samples or 2 chips
+  // FFT size is 16384 not 16386 which is off by 16 or 1 chip
+  // Those two together are 3 chips
+  float trackerCode = 1023.0f - pcsCode + 3.0f;
 
-    while (trackerCode < 0.0f)
-        trackerCode += 1023.0f;
+  while (trackerCode < 0.0f)
+    trackerCode += 1023.0f;
 
-    while (trackerCode >= 1023.0f)
-        trackerCode -= 1023.0f;
+  while (trackerCode >= 1023.0f)
+    trackerCode -= 1023.0f;
 
-    return trackerCode;
+  return trackerCode;
+}
+
+struct HandoffMetric
+{
+  float E = 0.0f;
+  float P = 0.0f;
+  float L = 0.0f;
+  float dll = 0.0f;
+  float pll = 0.0f;
+  int64_t Pi = 0;
+  int64_t Pq = 0;
+};
+
+static float wrapCodePhase(float code)
+{
+  while (code < 0.0f)
+    code += 1023.0f;
+  while (code >= 1023.0f)
+    code -= 1023.0f;
+  return code;
+}
+
+static HandoffMetric evaluateHandoffCandidate(
+    const ReplayMeta &meta,
+    const std::vector<RawSample> &samples,
+    const AcqResult &trial,
+    int refine_ms)
+{
+  const size_t ms_samples = meta.fs_rate / 1000;
+
+  G2INIT sv(trial.prn, 0);
+  ChannelProcessor chan((double)meta.fs_rate, trial, sv, false);
+
+  chan.setInputIsComplex(meta.input_is_complex);
+  chan.setSampleGain(8.0f);
+  chan.setLoopEnables(false, false);
+
+  double Esum = 0.0;
+  double Psum = 0.0;
+  double Lsum = 0.0;
+  double dllSum = 0.0;
+  double pllSum = 0.0;
+  int64_t PiSum = 0;
+  int64_t PqSum = 0;
+
+  for (int ms = 0; ms < refine_ms; ++ms)
+  {
+    CorrelatorResult r =
+        chan.Correlator(samples.data() + ms * ms_samples, ms_samples);
+
+    Esum += r.E_mag;
+    Psum += r.P_mag;
+    Lsum += r.L_mag;
+    dllSum += r.code_error;
+    pllSum += r.carrier_phase_error;
+    PiSum += r.Pi;
+    PqSum += r.Pq;
+  }
+
+  HandoffMetric m;
+  m.E = (float)(Esum / refine_ms);
+  m.P = (float)(Psum / refine_ms);
+  m.L = (float)(Lsum / refine_ms);
+  m.dll = (float)(dllSum / refine_ms);
+  m.pll = (float)(pllSum / refine_ms);
+  m.Pi = PiSum / refine_ms;
+  m.Pq = PqSum / refine_ms;
+  return m;
 }
 
 static AcqResult refineHandoffWithTracker(
@@ -217,67 +287,94 @@ static AcqResult refineHandoffWithTracker(
     const std::vector<RawSample> &samples,
     const AcqResult &base_acq)
 {
-    const size_t ms_samples = meta.fs_rate / 1000;
-    const int refine_ms = 20;
+  const int refine_ms = 5;
 
-    AcqResult best = base_acq;
-    float bestP = -1.0f;
+  AcqResult best = base_acq;
+  float bestP = -1.0f;
 
-    float centers[] = {
-        pcsToTrackerCodePhase(base_acq.codePhase)
-    };
+  FILE *csv = fopen("handoff_refine.csv", "w");
+  if (csv)
+  {
+    fprintf(csv,
+            "prn,input_code,input_bin,"
+            "stage,offset,chip_offset,test_code,"
+            "E,P,L,dll,pll,Pi,Pq,is_best\n");
+  }
 
-    for (float center : centers)
+  auto testCandidate =
+      [&](const char *stage, int offset, float chipOffset, float codePhase)
+  {
+    AcqResult trial = base_acq;
+    trial.codePhase = wrapCodePhase(codePhase);
+
+    HandoffMetric m =
+        evaluateHandoffCandidate(meta, samples, trial, refine_ms);
+
+    if (csv)
     {
-        //for (int sampleOffset = -64; sampleOffset <= 64; ++sampleOffset)
-        for (int sampleOffset = -1; sampleOffset <= 48; ++sampleOffset)
-        {
-            AcqResult trial = base_acq;
-            trial.codePhase = center + ((float)sampleOffset / 16.0f);
-
-            while (trial.codePhase < 0.0f)
-                trial.codePhase += 1023.0f;
-            while (trial.codePhase >= 1023.0f)
-                trial.codePhase -= 1023.0f;
-
-            G2INIT sv(trial.prn, 0);
-            ChannelProcessor chan((double)meta.fs_rate, trial, sv);
-
-            chan.setInputIsComplex(meta.input_is_complex);
-            chan.setSampleGain(8.0f);
-            chan.setLoopEnables(false, false);
-
-            double Psum = 0.0;
-
-            for (int ms = 0; ms < refine_ms; ++ms)
-            {
-                CorrelatorResult r =
-                    chan.Correlator(samples.data() + ms * ms_samples,
-                                    ms_samples);
-                Psum += r.P_mag;
-            }
-
-            float Pavg = (float)(Psum / refine_ms);
-
-            if (Pavg > bestP)
-            {
-                bestP = Pavg;
-                best = trial;
-                best.snr = Pavg;
-            }
-        }
+      fprintf(csv,
+              "%d,%.6f,%d,%s,%d,%.6f,%.6f,"
+              "%.6f,%.6f,%.6f,%.9f,%.9f,%lld,%lld,%d\n",
+              base_acq.prn,
+              base_acq.codePhase,
+              base_acq.bin,
+              stage,
+              offset,
+              chipOffset,
+              trial.codePhase,
+              m.E,
+              m.P,
+              m.L,
+              m.dll,
+              m.pll,
+              (long long)m.Pi,
+              (long long)m.Pq,
+              0);
     }
 
-    printf("[HANDOFF] coarse code=%.4f bin=%d refined code=%.4f metric=%.3f\n",
-           base_acq.codePhase,
-           base_acq.bin,
-           best.codePhase,
-           bestP);
+    if (m.P > bestP)
+    {
+      bestP = m.P;
+      best = trial;
+      best.snr = m.P;
+    }
+  };
 
-    return best;
+  // Stage 1: whole-chip neighborhood search.
+  for (int chipOffset = -3; chipOffset <= 3; ++chipOffset)
+  {
+    testCandidate(
+        "chip",
+        chipOffset,
+        (float)chipOffset,
+        base_acq.codePhase + (float)chipOffset);
+  }
+
+  AcqResult stage1_best = best;
+
+  // Stage 2: sample-level cleanup around best chip candidate.
+  for (int sampleOffset = -4; sampleOffset <= 4; ++sampleOffset)
+  {
+    float chipOffset = (float)sampleOffset / 16.0f;
+
+    testCandidate(
+        "sample",
+        sampleOffset,
+        chipOffset,
+        stage1_best.codePhase + chipOffset);
+  }
+
+  printf("[HANDOFF] input code=%.4f bin=%d refined code=%.4f metric=%.3f\n",
+         base_acq.codePhase,
+         base_acq.bin,
+         best.codePhase,
+         bestP);
+
+  if (csv)
+    fclose(csv);
+
+  return best;
 }
-
-
 
 int main(int argc, char **argv)
 {
@@ -329,17 +426,121 @@ int main(int argc, char **argv)
   printf("[ACQ] replay code=%.4f bin=%d snr=%.1f\n",
          acq.codePhase, acq.bin, acq.snr);
 
-if (enableCodePhaseSweep) {
-  runCodePhaseSweep(meta, samples, acq);
-  return 0;
-}
+  const float IF_HZ = 4.092e6f;
 
-AcqResult track_acq =
-    refineHandoffWithTracker(meta, samples, acq);
+  float coarseDopplerHz = acq.bin * 500.0f;
+
+  AcqResult acqFine =
+      acqMgr.runSingle(
+          rfe_meta,
+          samples.data(),
+          5 * ms_samples,
+          meta.prn,
+          IF_HZ + coarseDopplerHz,
+          2,
+          50.0f);
+
+  float fineAbsDopplerHz =
+      coarseDopplerHz + acqFine.bin * 50.0f;
+
+  printf("[ACQ FINE] local_bin=%d abs_dopp=%.1f code=%.4f peak=%d snr=%.1f\n",
+         acqFine.bin,
+         fineAbsDopplerHz,
+         acqFine.codePhase,
+         acqFine.peakIndex,
+         acqFine.snr);
+
+  float coarseMapped = pcsToTrackerCodePhase(acq.codePhase);
+  float fineMapped = pcsToTrackerCodePhase(acqFine.codePhase);
+
+  printf("[MAP] coarse_pcs=%.4f coarse_track=%.4f fine_pcs=%.4f fine_track=%.4f delta_track=%.4f chips\n",
+         acq.codePhase,
+         coarseMapped,
+         acqFine.codePhase,
+         fineMapped,
+         fineMapped - coarseMapped);
+
+  AcqResult track_input = acq;
+
+  // Use fine PCS for code phase, mapped into tracker coordinates.
+  track_input.codePhase = pcsToTrackerCodePhase(acqFine.codePhase);
+
+  // Preserve coarse Doppler bin for now.
+  // For PRN12, fine abs Doppler is 450 Hz, which still rounds to bin 1.
+  track_input.bin = (int)roundf(fineAbsDopplerHz / 500.0f);
+
+  printf("[TRK INPUT] code=%.4f bin=%d fine_abs_dopp=%.1f\n",
+         track_input.codePhase,
+         track_input.bin,
+         fineAbsDopplerHz);
+
+  if (enableCodePhaseSweep)
+  {
+    runCodePhaseSweep(meta, samples, acq);
+    return 0;
+  }
+
+  AcqResult track_acq =
+      refineHandoffWithTracker(meta, samples, track_input);
 
   printf("[TRK INIT OVERRIDE] acq code=%.4f track code=%.4f\n",
          acq.codePhase,
          track_acq.codePhase);
+
+float pcsA = acqFine.codePhase;
+
+float pcsB16368 =
+    (float)((16368 - acqFine.peakIndex) % 16368) / 16.0f;
+
+float pcsB16384 =
+    (float)((16384 - acqFine.peakIndex) % 16384) / 16.0f;
+
+float mapped =
+    pcsToTrackerCodePhase(pcsA);
+
+printf(
+    "[SUMMARY] "
+    "PRN=%d "
+    "A=%.4f "
+    "B16368=%.4f "
+    "B16384=%.4f "
+    "mapped=%.4f "
+    "refined=%.4f "
+    "dB16368=%.4f "
+    "dB16384=%.4f "
+    "dMapped=%.4f\n",
+    acqFine.prn,
+    pcsA,
+    pcsB16368,
+    pcsB16384,
+    mapped,
+    track_acq.codePhase,
+    track_acq.codePhase - pcsB16368,
+    track_acq.codePhase - pcsB16384,
+    track_acq.codePhase - mapped);
+
+    FILE *cmp = fopen("pcs_vs_tracker_handoff.csv", "w");
+if (cmp)
+{
+    fprintf(cmp,
+        "prn,peakIndex,pcsA,pcsB16368,pcsB16384,"
+        "mapped,refined,dB16368,dB16384,dMapped\n");
+
+    fprintf(cmp,
+        "%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
+        acqFine.prn,
+        acqFine.peakIndex,
+        pcsA,
+        pcsB16368,
+        pcsB16384,
+        mapped,
+        track_acq.codePhase,
+        track_acq.codePhase - pcsB16368,
+        track_acq.codePhase - pcsB16384,
+        track_acq.codePhase - mapped);
+
+    fclose(cmp);
+}
 
   G2INIT sv(track_acq.prn, 0);
 
@@ -355,16 +556,15 @@ AcqResult track_acq =
     chan.enableSampleTrace("sample_trace.csv", 512);
 
   FILE *csv = fopen("replay_tracking.csv", "w");
-writeReplayTrackingHeader(csv);
+  writeReplayTrackingHeader(csv);
 
-for (size_t ms = 0; ms < ms_count; ++ms)
-{
+  for (size_t ms = 0; ms < ms_count; ++ms)
+  {
     CorrelatorResult r =
         chan.Correlator(samples.data() + ms * ms_samples, ms_samples);
 
-writeReplayTrackingRow(csv, ms, r);
-
-  } 
+    writeReplayTrackingRow(csv, ms, r);
+  }
 
   fclose(csv);
 

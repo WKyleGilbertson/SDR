@@ -26,4 +26,12 @@ public:
         RawSample *samples,
         size_t sample_count,
         int prn);
+    AcqResult runSingle(
+        const RFE_Header_t &meta,
+        RawSample *samples,
+        size_t sample_count,
+        int prn,
+        float centerFreq,
+        int binRange,
+        float binWidth);
 };
