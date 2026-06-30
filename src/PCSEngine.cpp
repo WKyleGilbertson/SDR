@@ -179,10 +179,11 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
             float codePhaseB =
                 (float)((16368 - peakIndex) % 16368) / 16.0f;
 
-            printf(
-                "[PCS PEAK] PRN=%d bin=%d peak=%d "
-                "A=%.4f B=%.4f SNR=%.1f\n",
-                prn, bin, peakIndex, codePhaseA, codePhaseB, snr);
+            if (m_verbosePeaks) {
+            printf( "[PCS PEAK] PRN=%d bin=%d peak=%d "
+                "A=%.4f B=%.4f SNR=%.1f\n", prn, bin, peakIndex,
+                 codePhaseA, codePhaseB, snr);
+            }
 
             // 2. Update bestResult assignment
             bestResult.bin = bin;

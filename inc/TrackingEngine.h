@@ -56,17 +56,23 @@ class TrackingEngine
 {
 public:
     std::list<ChannelState> activeChannels;
+    bool beginTracking(
+        ElasticReceiver &rx,
+        const RFE_Header_t &meta,
+        const AcqResult &pcs_acq,
+        uint64_t acq_cursor,
+        size_t acq_samples);
     bool step(ElasticReceiver &rx, const RFE_Header_t &meta, uint32_t focusPRN,
               FILE *out, bool &acq_needed);
     bool captureReplayPackage(
-    ElasticReceiver &rx,
-    const RFE_Header_t &meta,
-    const AcqResult &fresh,
-    uint64_t fresh_cursor,
-    size_t ms_samples,
-    size_t capture_ms,
-    bool input_is_complex,
-    const char *basename);
+        ElasticReceiver &rx,
+        const RFE_Header_t &meta,
+        const AcqResult &fresh,
+        uint64_t fresh_cursor,
+        size_t ms_samples,
+        size_t capture_ms,
+        bool input_is_complex,
+        const char *basename);
 
 private:
     void processEpoch(ChannelState &state, const EpochResult &epoch,

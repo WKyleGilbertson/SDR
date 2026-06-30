@@ -231,6 +231,7 @@ int main(int argc, char **argv)
   rfe_meta.fs_rate = meta.fs_rate;
 
   PCSEngine pcs((float)meta.fs_rate);
+  pcs.setVerbosePeaks(true);
   AcquisitionMgr acqMgr(pcs);
 
   AcqResult acq =

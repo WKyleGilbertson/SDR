@@ -33,6 +33,7 @@ struct AcqResult
 class PCSEngine
 {
 private:
+    bool m_verbosePeaks = false;
     double m_sampleFreq;
     NCO m_nco;
     int N = 16384; // 2^14 = 16384, 16 more than 16386... zero padding for FFT
@@ -77,6 +78,7 @@ public:
         int centerPeakIndex,
         int radius,
         const char *csvPath);
+    void setVerbosePeaks(bool enabled) {m_verbosePeaks = enabled;}
 };
 
 #endif

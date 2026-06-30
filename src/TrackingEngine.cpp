@@ -1,4 +1,5 @@
 #include "TrackingEngine.h"
+#include "HandoffRefiner.hpp"
 #include <cmath>
 // #define TRK_LAG_DEBUG
 // #define DBG_NAV20
@@ -36,6 +37,75 @@ void TrackingEngine::resetNavAccumulation(ChannelState &state)
   state.epoch_counter = 0;
 }
 
+bool TrackingEngine::beginTracking(
+    ElasticReceiver &rx,
+    const RFE_Header_t &meta,
+    const AcqResult &pcs_acq,
+    uint64_t acq_cursor,
+    size_t acq_samples)
+{
+  RawSample *acq_ptr = nullptr;
+  std::vector<RawSample> acq_window;
+
+  if (!rx.get_window(
+          acq_cursor,
+          acq_ptr,
+          (unsigned int)acq_samples,
+          acq_window))
+  {
+    printf("[HANDOFF] failed to reload acquisition window\n");
+    return false;
+  }
+
+  AcqResult track_input = pcs_acq;
+  track_input.codePhase =
+      pcsToTrackerCodePhase(pcs_acq.codePhase);
+
+  AcqResult refined =
+      refineHandoffWithTracker(
+          (double)meta.fs_rate,
+          rx.input_is_complex(),
+          acq_ptr,
+          acq_samples,
+          track_input);
+
+  activeChannels.clear();
+
+  G2INIT sv(refined.prn, 0);
+
+  activeChannels.emplace_back(
+      refined.prn,
+      (double)meta.fs_rate,
+      refined,
+      sv);
+
+  auto &state = activeChannels.back();
+
+  state.processor->setInputIsComplex(rx.input_is_complex());
+
+  for (int phase = 0; phase < 20; ++phase)
+  {
+    state.decoder[phase]->setFocus(false);
+  }
+
+  state.total_tracked_ms = 0;
+  state.handover_sample_tick =
+      (uint32_t)std::round(refined.codePhase);
+  state.handover_unix_time = acq_ptr[0].unix_time;
+  state.sampleCursor = acq_cursor + acq_samples;
+
+  resetNavAccumulation(state);
+
+  printf("[TRK BEGIN] PRN=%d pcs=%.4f mapped=%.4f refined=%.4f cursor=%llu\n",
+         pcs_acq.prn,
+         pcs_acq.codePhase,
+         track_input.codePhase,
+         refined.codePhase,
+         (unsigned long long)state.sampleCursor);
+
+  return true;
+}
+
 bool TrackingEngine::captureReplayPackage(
     ElasticReceiver &rx,
     const RFE_Header_t &meta,
@@ -46,68 +116,68 @@ bool TrackingEngine::captureReplayPackage(
     bool input_is_complex,
     const char *basename)
 {
-    const size_t sample_count =
-        capture_ms * ms_samples;
+  const size_t sample_count =
+      capture_ms * ms_samples;
 
-    RawSample *ptr = nullptr;
-    std::vector<RawSample> window;
+  RawSample *ptr = nullptr;
+  std::vector<RawSample> window;
 
-    if (!rx.get_window(
-            fresh_cursor,
-            ptr,
-            (unsigned int)sample_count,
-            window))
-    {
-        return false;
-    }
+  if (!rx.get_window(
+          fresh_cursor,
+          ptr,
+          (unsigned int)sample_count,
+          window))
+  {
+    return false;
+  }
 
-    char raw_name[256];
-    snprintf(raw_name,
-             sizeof(raw_name),
-             "%s.rawsamples",
-             basename);
+  char raw_name[256];
+  snprintf(raw_name,
+           sizeof(raw_name),
+           "%s.rawsamples",
+           basename);
 
-    FILE *fp = fopen(raw_name, "wb");
-    if (!fp)
-        return false;
+  FILE *fp = fopen(raw_name, "wb");
+  if (!fp)
+    return false;
 
-    fwrite(window.data(),
-           sizeof(RawSample),
-           window.size(),
-           fp);
+  fwrite(window.data(),
+         sizeof(RawSample),
+         window.size(),
+         fp);
 
-    fclose(fp);
+  fclose(fp);
 
-    char meta_name[256];
-    snprintf(meta_name,
-             sizeof(meta_name),
-             "%s.meta",
-             basename);
+  char meta_name[256];
+  snprintf(meta_name,
+           sizeof(meta_name),
+           "%s.meta",
+           basename);
 
-    FILE *mf = fopen(meta_name, "w");
-    if (!mf)
-        return false;
+  FILE *mf = fopen(meta_name, "w");
+  if (!mf)
+    return false;
 
-    fprintf(mf, "version=1\n");
-    fprintf(mf, "fs_rate=%u\n", meta.fs_rate);
-    fprintf(mf, "prn=%d\n", fresh.prn);
-    fprintf(mf, "bin=%d\n", fresh.bin);
-    fprintf(mf, "codePhase=%.8f\n", fresh.codePhase);
-    fprintf(mf, "snr=%.3f\n", fresh.snr);
-    fprintf(mf, "input_is_complex=%d\n",
-            input_is_complex ? 1 : 0);
-    fprintf(mf, "capture_ms=%zu\n", capture_ms);
-    fprintf(mf, "sample_count=%zu\n", sample_count);
-    fprintf(mf, "start_cursor=%llu\n",
-            (unsigned long long)fresh_cursor);
+  fprintf(mf, "version=1\n");
+  fprintf(mf, "fs_rate=%u\n", meta.fs_rate);
+  fprintf(mf, "prn=%d\n", fresh.prn);
+  fprintf(mf, "bin=%d\n", fresh.bin);
+  fprintf(mf, "codePhase=%.8f\n", fresh.codePhase);
+  fprintf(mf, "snr=%.3f\n", fresh.snr);
+  fprintf(mf, "input_is_complex=%d\n",
+          input_is_complex ? 1 : 0);
+  fprintf(mf, "capture_ms=%zu\n", capture_ms);
+  fprintf(mf, "sample_count=%zu\n", sample_count);
+  fprintf(mf, "start_cursor=%llu\n",
+          (unsigned long long)fresh_cursor);
 
-    fclose(mf);
+  fclose(mf);
 
-    printf("[CAPTURE] %zu samples -> %s\n",
-           window.size(),
-           raw_name);
+  printf("[CAPTURE] %zu samples -> %s\n",
+         window.size(),
+         raw_name);
 
-    return true;
+  return true;
 }
 
 void TrackingEngine::processEpoch(
@@ -128,75 +198,75 @@ void TrackingEngine::processEpoch(
 
   if (iq_log && !iq_log_header_written)
   {
-fprintf(iq_log,
-        "epoch,prn,"
-        "Ei,Eq,Pi,Pq,Li,Lq,"
-        "symbol,snr,doppler,code_phase,"
-        "E_mag,P_mag,L_mag,"
-        "dll_disc,pll_disc\n");
+    fprintf(iq_log,
+            "epoch,prn,"
+            "Ei,Eq,Pi,Pq,Li,Lq,"
+            "symbol,snr,doppler,code_phase,"
+            "E_mag,P_mag,L_mag,"
+            "dll_disc,pll_disc\n");
     iq_log_header_written = true;
   }
 
   if (iq_log && iq_log_rows < max_iq_log_rows)
   {
-double E_mag =
-    std::sqrt((double)epoch.Ei * epoch.Ei +
-              (double)epoch.Eq * epoch.Eq);
+    double E_mag =
+        std::sqrt((double)epoch.Ei * epoch.Ei +
+                  (double)epoch.Eq * epoch.Eq);
 
-double P_mag =
-    std::sqrt((double)epoch.Pi * epoch.Pi +
-              (double)epoch.Pq * epoch.Pq);
+    double P_mag =
+        std::sqrt((double)epoch.Pi * epoch.Pi +
+                  (double)epoch.Pq * epoch.Pq);
 
-double L_mag =
-    std::sqrt((double)epoch.Li * epoch.Li +
-              (double)epoch.Lq * epoch.Lq);
+    double L_mag =
+        std::sqrt((double)epoch.Li * epoch.Li +
+                  (double)epoch.Lq * epoch.Lq);
 
-double dll_disc = 0.0;
-double denom = E_mag + L_mag;
+    double dll_disc = 0.0;
+    double denom = E_mag + L_mag;
 
-if (denom > 1e-9)
-{
-  dll_disc = (E_mag - L_mag) / denom;
-}
+    if (denom > 1e-9)
+    {
+      dll_disc = (E_mag - L_mag) / denom;
+    }
 
-double pll_disc = std::atan2((double)epoch.Pq, (double)epoch.Pi);
+    double pll_disc = std::atan2((double)epoch.Pq, (double)epoch.Pi);
 
-fprintf(iq_log,
-        "%llu,%d,"
-        "%d,%d,%d,%d,%d,%d,"
-        "%d,%.1f,%.1f,%.3f,"
-        "%.1f,%.1f,%.1f,"
-        "%.9f,%.9f\n",
-        state.epoch_counter,
-        state.prn,
-        epoch.Ei,
-        epoch.Eq,
-        epoch.Pi,
-        epoch.Pq,
-        epoch.Li,
-        epoch.Lq,
-        sym,
-        state.last_snr,
-        state.last_doppler_hz,
-        state.last_code_phase,
-        E_mag,
-        P_mag,
-        L_mag,
-        dll_disc,
-        pll_disc);
+    fprintf(iq_log,
+            "%llu,%d,"
+            "%d,%d,%d,%d,%d,%d,"
+            "%d,%.1f,%.1f,%.3f,"
+            "%.1f,%.1f,%.1f,"
+            "%.9f,%.9f\n",
+            state.epoch_counter,
+            state.prn,
+            epoch.Ei,
+            epoch.Eq,
+            epoch.Pi,
+            epoch.Pq,
+            epoch.Li,
+            epoch.Lq,
+            sym,
+            state.last_snr,
+            state.last_doppler_hz,
+            state.last_code_phase,
+            E_mag,
+            P_mag,
+            L_mag,
+            dll_disc,
+            pll_disc);
 
-iq_log_rows++;
+    iq_log_rows++;
 
-if (iq_log_rows == max_iq_log_rows)
-{
-  fflush(iq_log);
-  fclose(iq_log);
-  iq_log = nullptr;
-  iq_log_done = true;
+    if (iq_log_rows == max_iq_log_rows)
+    {
+      fflush(iq_log);
+      fclose(iq_log);
+      iq_log = nullptr;
+      iq_log_done = true;
 
-  printf("\n[IQLOG] Closed tracking_iq.csv after %llu rows\n",
-         iq_log_rows);
-}
+      printf("\n[IQLOG] Closed tracking_iq.csv after %llu rows\n",
+             iq_log_rows);
+    }
   }
 
   for (int phase = 0; phase < 20; ++phase)
