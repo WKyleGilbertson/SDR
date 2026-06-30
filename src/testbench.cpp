@@ -2,11 +2,13 @@
 #include <cstdlib>
 #include <vector>
 #include <string>
+#include <cmath>
 #include "AcquisitionMgr.hpp"
 #include "PCSEngine.hpp"
 #include "L1IFUtil.hpp"
 #include "ChannelProcessor.h"
 #include "g2init.h"
+#include "HandoffRefiner.hpp"
 
 struct ReplayMeta
 {
@@ -194,188 +196,6 @@ void writeReplayTrackingRow(FILE *csv, size_t ms, CorrelatorResult r)
           r.is_locked ? 1 : 0);
 };
 
-/*
-writeHandoffHeader(csv);
-writeHandoffRow(csv, acq, track_acq, optional_refined_acq);
-*/
-float pcsToTrackerCodePhase(float pcsCode)
-{
-  // EPL reg Prompt is bit 32 which is 16 samples or 2 chips
-  // FFT size is 16384 not 16386 which is off by 16 or 1 chip
-  // Those two together are 3 chips
-  float trackerCode = 1023.0f - pcsCode + 3.0f;
-
-  while (trackerCode < 0.0f)
-    trackerCode += 1023.0f;
-
-  while (trackerCode >= 1023.0f)
-    trackerCode -= 1023.0f;
-
-  return trackerCode;
-}
-
-struct HandoffMetric
-{
-  float E = 0.0f;
-  float P = 0.0f;
-  float L = 0.0f;
-  float dll = 0.0f;
-  float pll = 0.0f;
-  int64_t Pi = 0;
-  int64_t Pq = 0;
-};
-
-static float wrapCodePhase(float code)
-{
-  while (code < 0.0f)
-    code += 1023.0f;
-  while (code >= 1023.0f)
-    code -= 1023.0f;
-  return code;
-}
-
-static HandoffMetric evaluateHandoffCandidate(
-    const ReplayMeta &meta,
-    const std::vector<RawSample> &samples,
-    const AcqResult &trial,
-    int refine_ms)
-{
-  const size_t ms_samples = meta.fs_rate / 1000;
-
-  G2INIT sv(trial.prn, 0);
-  ChannelProcessor chan((double)meta.fs_rate, trial, sv, false);
-
-  chan.setInputIsComplex(meta.input_is_complex);
-  chan.setSampleGain(8.0f);
-  chan.setLoopEnables(false, false);
-
-  double Esum = 0.0;
-  double Psum = 0.0;
-  double Lsum = 0.0;
-  double dllSum = 0.0;
-  double pllSum = 0.0;
-  int64_t PiSum = 0;
-  int64_t PqSum = 0;
-
-  for (int ms = 0; ms < refine_ms; ++ms)
-  {
-    CorrelatorResult r =
-        chan.Correlator(samples.data() + ms * ms_samples, ms_samples);
-
-    Esum += r.E_mag;
-    Psum += r.P_mag;
-    Lsum += r.L_mag;
-    dllSum += r.code_error;
-    pllSum += r.carrier_phase_error;
-    PiSum += r.Pi;
-    PqSum += r.Pq;
-  }
-
-  HandoffMetric m;
-  m.E = (float)(Esum / refine_ms);
-  m.P = (float)(Psum / refine_ms);
-  m.L = (float)(Lsum / refine_ms);
-  m.dll = (float)(dllSum / refine_ms);
-  m.pll = (float)(pllSum / refine_ms);
-  m.Pi = PiSum / refine_ms;
-  m.Pq = PqSum / refine_ms;
-  return m;
-}
-
-static AcqResult refineHandoffWithTracker(
-    const ReplayMeta &meta,
-    const std::vector<RawSample> &samples,
-    const AcqResult &base_acq)
-{
-  const int refine_ms = 5;
-
-  AcqResult best = base_acq;
-  float bestP = -1.0f;
-
-  FILE *csv = fopen("handoff_refine.csv", "w");
-  if (csv)
-  {
-    fprintf(csv,
-            "prn,input_code,input_bin,"
-            "stage,offset,chip_offset,test_code,"
-            "E,P,L,dll,pll,Pi,Pq,is_best\n");
-  }
-
-  auto testCandidate =
-      [&](const char *stage, int offset, float chipOffset, float codePhase)
-  {
-    AcqResult trial = base_acq;
-    trial.codePhase = wrapCodePhase(codePhase);
-
-    HandoffMetric m =
-        evaluateHandoffCandidate(meta, samples, trial, refine_ms);
-
-    if (csv)
-    {
-      fprintf(csv,
-              "%d,%.6f,%d,%s,%d,%.6f,%.6f,"
-              "%.6f,%.6f,%.6f,%.9f,%.9f,%lld,%lld,%d\n",
-              base_acq.prn,
-              base_acq.codePhase,
-              base_acq.bin,
-              stage,
-              offset,
-              chipOffset,
-              trial.codePhase,
-              m.E,
-              m.P,
-              m.L,
-              m.dll,
-              m.pll,
-              (long long)m.Pi,
-              (long long)m.Pq,
-              0);
-    }
-
-    if (m.P > bestP)
-    {
-      bestP = m.P;
-      best = trial;
-      best.snr = m.P;
-    }
-  };
-
-  // Stage 1: whole-chip neighborhood search.
-  for (int chipOffset = -3; chipOffset <= 3; ++chipOffset)
-  {
-    testCandidate(
-        "chip",
-        chipOffset,
-        (float)chipOffset,
-        base_acq.codePhase + (float)chipOffset);
-  }
-
-  AcqResult stage1_best = best;
-
-  // Stage 2: sample-level cleanup around best chip candidate.
-  for (int sampleOffset = -4; sampleOffset <= 4; ++sampleOffset)
-  {
-    float chipOffset = (float)sampleOffset / 16.0f;
-
-    testCandidate(
-        "sample",
-        sampleOffset,
-        chipOffset,
-        stage1_best.codePhase + chipOffset);
-  }
-
-  printf("[HANDOFF] input code=%.4f bin=%d refined code=%.4f metric=%.3f\n",
-         base_acq.codePhase,
-         base_acq.bin,
-         best.codePhase,
-         bestP);
-
-  if (csv)
-    fclose(csv);
-
-  return best;
-}
-
 int main(int argc, char **argv)
 {
   bool enableSampleTrace = false;
@@ -430,6 +250,9 @@ int main(int argc, char **argv)
 
   float coarseDopplerHz = acq.bin * 500.0f;
 
+  AcqResult acqFine = acq;
+  float fineAbsDopplerHz = coarseDopplerHz;
+  /* We don't need a find bin PCS. Serial search gets our answer
   AcqResult acqFine =
       acqMgr.runSingle(
           rfe_meta,
@@ -441,7 +264,7 @@ int main(int argc, char **argv)
           50.0f);
 
   float fineAbsDopplerHz =
-      coarseDopplerHz + acqFine.bin * 50.0f;
+      coarseDopplerHz + acqFine.bin * 50.0f; */
 
   printf("[ACQ FINE] local_bin=%d abs_dopp=%.1f code=%.4f peak=%d snr=%.1f\n",
          acqFine.bin,
@@ -450,7 +273,7 @@ int main(int argc, char **argv)
          acqFine.peakIndex,
          acqFine.snr);
 
-  float coarseMapped = pcsToTrackerCodePhase(acq.codePhase);
+    float coarseMapped = pcsToTrackerCodePhase(acq.codePhase);
   float fineMapped = pcsToTrackerCodePhase(acqFine.codePhase);
 
   printf("[MAP] coarse_pcs=%.4f coarse_track=%.4f fine_pcs=%.4f fine_track=%.4f delta_track=%.4f chips\n",
@@ -462,11 +285,7 @@ int main(int argc, char **argv)
 
   AcqResult track_input = acq;
 
-  // Use fine PCS for code phase, mapped into tracker coordinates.
-  track_input.codePhase = pcsToTrackerCodePhase(acqFine.codePhase);
-
-  // Preserve coarse Doppler bin for now.
-  // For PRN12, fine abs Doppler is 450 Hz, which still rounds to bin 1.
+  track_input.codePhase = fineMapped;
   track_input.bin = (int)roundf(fineAbsDopplerHz / 500.0f);
 
   printf("[TRK INPUT] code=%.4f bin=%d fine_abs_dopp=%.1f\n",
@@ -481,7 +300,12 @@ int main(int argc, char **argv)
   }
 
   AcqResult track_acq =
-      refineHandoffWithTracker(meta, samples, track_input);
+      refineHandoffWithTracker(
+          (double)meta.fs_rate,
+          meta.input_is_complex,
+          samples.data(),
+          samples.size(),
+          track_input);
 
   printf("[TRK INIT OVERRIDE] acq code=%.4f track code=%.4f\n",
          acq.codePhase,
@@ -498,26 +322,12 @@ float pcsB16384 =
 float mapped =
     pcsToTrackerCodePhase(pcsA);
 
-printf(
-    "[SUMMARY] "
-    "PRN=%d "
-    "A=%.4f "
-    "B16368=%.4f "
-    "B16384=%.4f "
-    "mapped=%.4f "
-    "refined=%.4f "
-    "dB16368=%.4f "
-    "dB16384=%.4f "
-    "dMapped=%.4f\n",
-    acqFine.prn,
-    pcsA,
-    pcsB16368,
-    pcsB16384,
-    mapped,
-    track_acq.codePhase,
-    track_acq.codePhase - pcsB16368,
-    track_acq.codePhase - pcsB16384,
-    track_acq.codePhase - mapped);
+printf("[SUMMARY] PRN=%d pcs=%.4f mapped=%.4f refined=%.4f dMapped=%.4f\n",
+       acqFine.prn,
+       acqFine.codePhase,
+       mapped,
+       track_acq.codePhase,
+       track_acq.codePhase - mapped);
 
     FILE *cmp = fopen("pcs_vs_tracker_handoff.csv", "w");
 if (cmp)
