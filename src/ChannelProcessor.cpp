@@ -332,7 +332,9 @@ void ChannelProcessor::runAccumulation(
             last_rot = now_rot;
         }
 
+        #ifdef SAMPLE_TRACE
         dumpSampleTrace(samples[i], carrIdx, c, s, bb_i, bb_q, prompt_i_term, prompt_q_term);
+        #endif
 
         if (_codeNco.getRotations() < prev_rotations)
         {
@@ -417,21 +419,26 @@ TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
     //        float sign_I = (m.I >= 0.0f) ? 1.0f : -1.0f;
     //        float clean_I = m.I * sign_I;
     //        float clean_Q = m.Q * sign_I;
-    float raw_angular_error =
+    float raw =
+        atan2f(m.Q, m.I); // Returns [-pi, pi] radians
+        if (raw > (2*M_PI)) raw -= M_PI;
+        else if (raw < (-2*M_PI)) raw += M_PI;
+        /*
         (fabsf(m.I) > 1e-6f)
             ? atanf(m.Q / m.I)
-            : 0.0f;
+            : 0.0f; */
     /*    (clean_I > 1e-6f)
             ? atanf(clean_Q / clean_I)
             : 0.0f; */
 
     // m.carrError = raw_angular_error / (2.0f * (float)M_PI);
-    m.carrError = raw_angular_error;
+    m.carrError = raw;
 
+    /*
     if (fabs(m.carrError - _oldCarrError) > 0.5f)
     {
         m.carrError = _oldCarrError + (m.carrError * 0.1f);
-    }
+    } */
 
     m.E2 = m.Early_I * m.Early_I + m.Early_Q * m.Early_Q;
     m.L2 = m.Late_I * m.Late_I + m.Late_Q * m.Late_Q;

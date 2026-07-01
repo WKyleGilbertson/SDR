@@ -17,7 +17,7 @@
 #include "TrackingEngine.h"
 #include "NavDecoder.h"
 
-//#define CAPTURE_TRACKING_DATA
+// #define CAPTURE_TRACKING_DATA
 
 static bool runFreshFocusedAcquisition(
     ElasticReceiver &rx,
@@ -182,6 +182,45 @@ int main(int argc, char *argv[])
 
             if (acq_needed)
             {
+                uint32_t reacquirePrn = 0;
+
+                if (tracking.popReacquire(reacquirePrn))
+                {
+                    AcqResult fresh = {};
+                    uint64_t fresh_cursor = 0;
+
+                    if (runFreshFocusedAcquisition(
+                            rx,
+                            acqMgr,
+                            meta,
+                            reacquirePrn,
+                            ms_samples,
+                            acq_samples,
+                            fresh,
+                            fresh_cursor))
+                    {
+                        tracking.beginTracking(
+                            rx,
+                            meta,
+                            fresh,
+                            fresh_cursor,
+                            acq_samples);
+                    }
+                    else
+                    {
+                        printf("[!] Focused reacquire failed for PRN %u\n", reacquirePrn);
+                    }
+
+                    acq_needed = !tracking.hasActiveChannels();
+                    continue;
+                }
+
+                if (tracking.hasActiveChannels())
+                {
+                    acq_needed = false;
+                    continue;
+                }
+
                 uint64_t newest = rx.get_write_index();
 
                 if (newest < acq_samples + ms_samples)
@@ -324,93 +363,6 @@ int main(int argc, char *argv[])
 
                         continue;
                     }
-                    /*
-                    if (focusTarget != nullptr)
-                    {
-                        AcqResult fresh = {};
-                        uint64_t fresh_cursor = 0;
-
-                        if (!runFreshFocusedAcquisition(
-                                rx,
-                                acqMgr,
-                                meta,
-                                focusPRN,
-                                ms_samples,
-                                acq_samples,
-                                fresh,
-                                fresh_cursor))
-                        {
-                            printf("[!] Unable to refresh focused acquisition for PRN %d\n",
-                                   focusPRN);
-                            continue;
-                        } // Splice in
-
-                        tracking.activeChannels.emplace_back(
-                            fresh.prn,
-                            (double)meta.fs_rate,
-                            fresh,
-                            pcs.getSV(fresh.prn));
-
-                        tracking.activeChannels.back()
-                            .processor->setInputIsComplex(rx.input_is_complex());
-
-                        for (int phase = 0; phase < 20; ++phase)
-                        {
-                            tracking.activeChannels.back().decoder[phase]->setFocus(false);
-                        }
-
-                        auto &state = tracking.activeChannels.front();
-
-                        state.total_tracked_ms = 0;
-
-                        // state.handover_sample_tick = (uint32_t)std::round(focusTarget->codePhase);
-                        state.handover_sample_tick = (uint32_t)std::round(fresh.codePhase);
-                        state.handover_unix_time = acq_ptr[0].unix_time;
-                        state.sampleCursor = fresh_cursor + acq_samples;
-
-                        uint64_t fresh_end = fresh_cursor + acq_samples;
-
-                        printf(
-                            "[HANDOFF CHECK] fresh_end=%llu start=%llu delta=%lld samples\n",
-                            (unsigned long long)fresh_end,
-                            (unsigned long long)state.sampleCursor,
-                            (long long)(state.sampleCursor - fresh_end));
-                        acq_needed = false;
-
-                        printf("[*] HANDOVER SUCCESS: fresh acquisition window [%llu, %llu)\n",
-                               fresh_cursor,
-                               fresh_cursor + acq_samples);
-
-#ifdef CAPTURE_TRACKING_DATA
-                        char capture_name[64];
-                        snprintf(capture_name,
-                                 sizeof(capture_name),
-                                 "tracking_prn%03d",
-                                 fresh.prn);
-                        tracking.captureReplayPackage(
-                            rx,
-                            meta,
-                            fresh,
-                            fresh_cursor,
-                            ms_samples,
-                            100, // capture 100 ms
-                            rx.input_is_complex(),
-                            capture_name);
-#endif
-
-                        auto timing =
-                            rx.get_timing_status(
-                                fresh_cursor + acq_samples,
-                                ms_samples);
-
-                        printf(
-                            "[*] Fresh handoff lag=%.1f ms margin=%.1f ms ring=%.1f ms\n",
-                            timing.lag_ms,
-                            timing.margin_ms,
-                            timing.ring_ms);
-
-                        continue;
-                    } // FocusTarget is not Null */
                 }
 
                 continue;

@@ -69,7 +69,11 @@ bool TrackingEngine::beginTracking(
           acq_samples,
           track_input);
 
-  activeChannels.clear();
+  activeChannels.remove_if(
+    [&](const ChannelState &ch)
+    {
+        return ch.prn == refined.prn;
+    });
 
   G2INIT sv(refined.prn, 0);
 
@@ -188,7 +192,6 @@ void TrackingEngine::processEpoch(
 {
   int8_t sym = epoch.symbol;
   int32_t prompt_i = epoch.Pi;
-  static constexpr uint64_t max_iq_log_rows = 1000;
   static bool iq_log_done = false;
 
   if (!iq_log_done && iq_log == nullptr)
@@ -198,12 +201,12 @@ void TrackingEngine::processEpoch(
 
   if (iq_log && !iq_log_header_written)
   {
-    fprintf(iq_log,
-            "epoch,prn,"
-            "Ei,Eq,Pi,Pq,Li,Lq,"
-            "symbol,snr,doppler,code_phase,"
-            "E_mag,P_mag,L_mag,"
-            "dll_disc,pll_disc\n");
+fprintf(iq_log,
+        "epoch,prn,"
+        "Ei,Eq,Pi,Pq,Li,Lq,"
+        "symbol,snr,doppler,carrier_nco_hz,code_phase,"
+        "E_mag,P_mag,L_mag,"
+        "dll_disc,pll_disc,is_locked\n");
     iq_log_header_written = true;
   }
 
@@ -232,28 +235,30 @@ void TrackingEngine::processEpoch(
     double pll_disc = std::atan2((double)epoch.Pq, (double)epoch.Pi);
 
     fprintf(iq_log,
-            "%llu,%d,"
-            "%d,%d,%d,%d,%d,%d,"
-            "%d,%.1f,%.1f,%.3f,"
-            "%.1f,%.1f,%.1f,"
-            "%.9f,%.9f\n",
-            state.epoch_counter,
-            state.prn,
-            epoch.Ei,
-            epoch.Eq,
-            epoch.Pi,
-            epoch.Pq,
-            epoch.Li,
-            epoch.Lq,
-            sym,
-            state.last_snr,
-            state.last_doppler_hz,
-            state.last_code_phase,
-            E_mag,
-            P_mag,
-            L_mag,
-            dll_disc,
-            pll_disc);
+"%llu,%d,"
+"%d,%d,%d,%d,%d,%d,"
+"%d,%.1f,%.1f,%.1f,%.3f,"
+"%.1f,%.1f,%.1f,"
+"%.9f,%.9f,%d\n",
+state.epoch_counter,
+state.prn,
+epoch.Ei,
+epoch.Eq,
+epoch.Pi,
+epoch.Pq,
+epoch.Li,
+epoch.Lq,
+sym,
+state.last_snr,
+state.last_doppler_hz,
+state.last_carrier_nco_hz,
+state.last_code_phase,
+E_mag,
+P_mag,
+L_mag,
+dll_disc,
+pll_disc,
+state.last_is_locked ? 1 : 0);
 
     iq_log_rows++;
 
@@ -456,10 +461,14 @@ bool TrackingEngine::step(
   const int feed_samples = (unsigned int)ms_samples; // Process 1 ms of data at a time
   bool did_work = false;
 
-  for (auto &state : activeChannels)
-  {
-    if (state.prn != (int)focusPRN)
+ for (auto it = activeChannels.begin(); it != activeChannels.end(); )
+{
+    ChannelState &state = *it;
+  
+    if (state.prn != (int)focusPRN) {
+      ++it;
       continue;
+  }
 
     while (true)
     {
@@ -549,8 +558,9 @@ bool TrackingEngine::step(
       state.processor->setLoopEnables(true, true);
       CorrelatorResult res = state.processor->Correlator(ms_ptr, feed_samples);
 
-      bool badEpoch = (res.snr < 6.0f) && (std::abs(res.Pi) < 5000) &&
-        (std::abs(res.Pq) > 5000);
+    double pMag = std::hypot((double)res.Pi, (double)res.Pq);      
+
+      bool badEpoch = ((res.snr < 6.0f) && (pMag < 8000));
 
         if (badEpoch)
           state.badLockEpochs++;
@@ -571,17 +581,24 @@ bool TrackingEngine::step(
 
       state.total_tracked_ms++;
 
-if (state.total_tracked_ms > 1000 && state.badLockEpochs >=3)
+if (state.total_tracked_ms > 1000 && state.badLockEpochs >= 50)
 {
-    printf("\n[LOCK LOST] PRN %d reacquiring\n", state.prn);
-    activeChannels.clear();
-    acq_needed = true;
-    return did_work;
+printf("\n[LOCK LOST] PRN %d queued for focused reacquire\n", state.prn);
+
+queueReacquire((uint32_t)state.prn);
+
+it = activeChannels.erase(it);
+
+acq_needed = true;   // means “service reacquire queue”, not necessarily global survey
+return did_work;
 }
 
       state.last_snr = res.snr;
       state.last_doppler_hz = res.doppler_hz;
       state.last_code_phase = res.code_phase;
+
+      state.last_carrier_nco_hz = res.carrier_nco_hz;
+      state.last_is_locked = res.is_locked;
 
       for (const auto &epoch : res.epochs)
       {
@@ -618,7 +635,8 @@ if (state.total_tracked_ms > 1000 && state.badLockEpochs >=3)
             write);
 #endif
       }
-    }
-  }
+    } // End while
+  ++it;
+  } // end for
   return did_work;
-}
+} // end step()

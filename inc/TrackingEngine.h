@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 #include <cstddef>
+#include <algorithm>
 
 #include "ElasticReceiver.h"
 #include "ChannelProcessor.h"
@@ -50,6 +51,9 @@ struct ChannelState
     uint32_t handover_unix_time = 0;
     uint32_t badLockEpochs = 0;
 
+    double last_carrier_nco_hz = 0.0;
+    bool last_is_locked = false;
+
     ChannelState(int p, double fs, const AcqResult &res, G2INIT s);
 };
 
@@ -74,11 +78,35 @@ public:
         size_t capture_ms,
         bool input_is_complex,
         const char *basename);
+    bool hasActiveChannels() const
+    {
+        return !activeChannels.empty();
+    }
+
+    void queueReacquire(uint32_t prn)
+    {
+        if (std::find(reacquireQueue.begin(), reacquireQueue.end(), prn) ==
+            reacquireQueue.end())
+        {
+            reacquireQueue.push_back(prn);
+        }
+    }
+
+    bool popReacquire(uint32_t &prn)
+    {
+        if (reacquireQueue.empty())
+            return false;
+
+        prn = reacquireQueue.front();
+        reacquireQueue.pop_front();
+        return true;
+    }
 
 private:
     void processEpoch(ChannelState &state, const EpochResult &epoch,
                       const RFE_Header_t &meta, FILE *out);
     void resetNavAccumulation(ChannelState &state);
+    std::deque<uint32_t> reacquireQueue;
     bool file_logging_enabled = true;
 
     uint64_t logged_ms = 0;
