@@ -421,8 +421,8 @@ TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
     //        float clean_Q = m.Q * sign_I;
     float raw =
         atan2f(m.Q, m.I); // Returns [-pi, pi] radians
-        if (raw > (2*M_PI)) raw -= M_PI;
-        else if (raw < (-2*M_PI)) raw += M_PI;
+        if (raw > (M_PI/2)) raw -= M_PI;
+        else if (raw < (-M_PI/2)) raw += M_PI;
         /*
         (fabsf(m.I) > 1e-6f)
             ? atanf(m.Q / m.I)
