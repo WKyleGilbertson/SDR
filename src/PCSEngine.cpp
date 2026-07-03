@@ -19,8 +19,8 @@ PCSEngine::PCSEngine(double sampleFreq)
       m_codeFftCurrent(N),
       m_ncoBuffer(N) // Initialize m_ncoBuffer to size N (16384)
 {
-    m_cfg_fwd = kiss_fft_alloc(16384, 0, NULL, NULL);
-    m_cfg_inv = kiss_fft_alloc(16384, 1, NULL, NULL);
+    m_cfg_fwd = kiss_fft_alloc(ReceiverConfig::PCS_FFT_SIZE, 0, NULL, NULL);
+    m_cfg_inv = kiss_fft_alloc(ReceiverConfig::PCS_FFT_SIZE, 1, NULL, NULL);
 }
 
 PCSEngine::~PCSEngine()
@@ -42,6 +42,7 @@ void PCSEngine::initPrn(int prn)
     for (size_t idx = 0; idx < 16368; idx++)
     {
         m_codeFftCurrent[idx].r = (int16_t)sv.CODE[idx / 16] * CODE_SCALE;
+//        m_codeFftCurrent[idx].i = (int16_t)sv.CODE[idx / 16] * CODE_SCALE;
         m_codeFftCurrent[idx].i = 0;
     }
 
@@ -214,7 +215,7 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
 
             /*printf("[PCS WIN] idx=%5d off=%+3d A=%8.4f B16368=%8.4f B16384=%8.4f mag=%.6f\n",
                    idx, k, (float)idx / 16.0f, (float)((16368 - idx) % 16368) / 16.0f,
-                   (float)((16384 - idx) % 16384) / 16.0f, mag); */
+                   (float)((ReceiverConfig::PCS_FFT_SIZE - idx) % ReceiverConfig::PCS_FFT_SIZE) / 16.0f, mag); */
         }
     }
     return bestResult;
@@ -298,7 +299,8 @@ void PCSEngine::dumpLocalCorrelation(
         float pcsB16368 =
             (float)((16368 - idx) % 16368) / 16.0f;
         float pcsB16384 =
-            (float)((16384 - idx) % 16384) / 16.0f;
+            (float)((ReceiverConfig::PCS_FFT_SIZE - idx) %
+                      ReceiverConfig::PCS_FFT_SIZE) / 16.0f;
 
         fprintf(csv,
                 "%d,%d,%d,%d,%.6f,%.6f,%.6f,%.9f\n",

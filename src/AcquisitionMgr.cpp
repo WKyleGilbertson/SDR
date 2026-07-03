@@ -52,7 +52,7 @@ std::vector<AcqResult> AcquisitionMgr::run(
             m_pcs.search(
                 prn,
                 aligned_data,
-                4.092e6f,
+                ReceiverConfig::L1_IF_HZ,
                 20,
                 500.0f,
                 aligned_anchor);
@@ -75,7 +75,7 @@ std::vector<AcqResult> AcquisitionMgr::run(
             m_pcs.search(
                 prn,
                 aligned_data,
-                4.092e6f,
+                ReceiverConfig::L1_IF_HZ,
                 20,
                 500.0f,
                 aligned_anchor);
@@ -184,7 +184,7 @@ AcqResult AcquisitionMgr::runSingle(
         samples,
         sample_count,
         prn,
-        4.092e6f,
+        ReceiverConfig::L1_IF_HZ,
         20,
         500.0f);
 }

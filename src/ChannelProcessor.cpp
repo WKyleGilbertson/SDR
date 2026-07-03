@@ -168,8 +168,10 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
     : _fs(fs_rate), _carrNco(8, (float)fs_rate), _codeNco(4, (float)fs_rate),
       _m_sv(sv), _verboseInit(verboseInit)
 {
-    _carrFreqBasis = 4.092e6f + init.bin * 500.0f;
-    _codeFreqBasis = 1.023e6f;
+    //_carrFreqBasis = 4.092e6f + init.bin * 500.0f;
+    _carrFreqBasis = ReceiverConfig::L1_IF_HZ + init.bin * 500.0f;
+    //_codeFreqBasis = 1.023e6f;
+    _codeFreqBasis = ReceiverConfig::CODE_FREQ_HZ;
     resetAccumulators(_acc);
     resetAccumulators(_epochAcc);
     _epochSampleCount = 0;
@@ -209,6 +211,7 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
 
     _codeNco.LoadCACODE(_m_sv.CACODE);
     _codeNco.RakeSpacing(CorrelatorSpacing::halfChip);
+    //_codeNco.RakeSpacing(CorrelatorSpacing::Narrow);
 
     float spc = (float)_fs / 1023000.0f;
     int chipTravelDelay = 0;
@@ -492,7 +495,8 @@ void ChannelProcessor::updateCarrierLoop(
 
     _carrNco.SetFrequency(_currentCommandedFreq);
 
-    _doppler_hz = _currentCommandedFreq - 4.092e6f;
+    //_doppler_hz = _currentCommandedFreq - 4.092e6f;
+    _doppler_hz = _currentCommandedFreq - ReceiverConfig::L1_IF_HZ;
 
     float dopplerDelta = _doppler_hz - _initialDopplerHz;
 

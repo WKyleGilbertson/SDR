@@ -7,6 +7,7 @@
 #include <cstdint>
 #include "G2INIT.h"
 #include "NCO.h" // Must include this for m_nco member
+#include "L1IFUtil.hpp" // For PCS_FFT_SIZE
 
 #undef kiss_fft_scalar
 #define kiss_fft_scalar int16_t
@@ -36,7 +37,7 @@ private:
     bool m_verbosePeaks = false;
     double m_sampleFreq;
     NCO m_nco;
-    int N = 16384; // 2^14 = 16384, 16 more than 16386... zero padding for FFT
+    int N = ReceiverConfig::PCS_FFT_SIZE; // 2^14 = 16384, 16 more than 16386... zero padding for FFT
 
     std::vector<float> m_accumulatedMag;
     std::vector<kiss_fft_cpx> m_workspace;

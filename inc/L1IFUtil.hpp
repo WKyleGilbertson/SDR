@@ -14,6 +14,8 @@ namespace ReceiverConfig
     constexpr int    SAMPLES_PER_MS    = CA_CHIPS * SAMPLES_PER_CHIP; // 16368
     constexpr int    PCS_FFT_SIZE      = 16384;
 
+    constexpr float  DEF_SAMPLE_RATE   = 16368000.0f;
+
     constexpr double CODE_FREQ_HZ      = 1.023e6;
     constexpr double L1_IF_HZ          = 4.092e6;
 

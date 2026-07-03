@@ -113,9 +113,10 @@ class ChannelProcessor
 {
 public:
     // Default constructor so 'chan' can exist before acquisition
-    ChannelProcessor() : _fs(16368000.0), _carrNco(8, 16368000.0f),
-                         _codeNco(0, 16368000.0f), _code_phase(0), _m_sv(0, 0),
-                         _sampleCounter(0) {}
+    ChannelProcessor() : _fs(ReceiverConfig::DEF_SAMPLE_RATE),
+                         _carrNco(8, ReceiverConfig::DEF_SAMPLE_RATE),
+                         _codeNco(0, ReceiverConfig::DEF_SAMPLE_RATE),
+                         _code_phase(0), _m_sv(0, 0), _sampleCounter(0) {}
     // The real constructor we use after lock
     ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT &sv,
          bool verboseInit = true);

@@ -11,7 +11,7 @@ class AcquisitionMgr
 {
 private:
     PCSEngine &m_pcs;
-    const size_t FFT_SIZE = 16384;
+    const size_t FFT_SIZE = ReceiverConfig::PCS_FFT_SIZE;
     const int NUM_MS = 5;
 
 public:

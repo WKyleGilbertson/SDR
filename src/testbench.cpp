@@ -247,7 +247,7 @@ int main(int argc, char **argv)
   printf("[ACQ] replay code=%.4f bin=%d snr=%.1f\n",
          acq.codePhase, acq.bin, acq.snr);
 
-  const float IF_HZ = 4.092e6f;
+  const float IF_HZ = ReceiverConfig::L1_IF_HZ;
 
   float coarseDopplerHz = acq.bin * 500.0f;
 
@@ -318,7 +318,8 @@ float pcsB16368 =
     (float)((16368 - acqFine.peakIndex) % 16368) / 16.0f;
 
 float pcsB16384 =
-    (float)((16384 - acqFine.peakIndex) % 16384) / 16.0f;
+    (float)((ReceiverConfig::PCS_FFT_SIZE - acqFine.peakIndex) %
+              ReceiverConfig::PCS_FFT_SIZE) / 16.0f;
 
 float mapped =
     pcsToTrackerCodePhase(pcsA);
