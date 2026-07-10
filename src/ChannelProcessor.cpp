@@ -168,9 +168,7 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
     : _fs(fs_rate), _carrNco(8, (float)fs_rate), _codeNco(4, (float)fs_rate),
       _m_sv(sv), _verboseInit(verboseInit)
 {
-    //_carrFreqBasis = 4.092e6f + init.bin * 500.0f;
     _carrFreqBasis = ReceiverConfig::L1_IF_HZ + init.bin * 500.0f;
-    //_codeFreqBasis = 1.023e6f;
     _codeFreqBasis = ReceiverConfig::CODE_FREQ_HZ;
     resetAccumulators(_acc);
     resetAccumulators(_epochAcc);
@@ -191,9 +189,7 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
     _sampleCounter = 0;
     _prevCodePhase = 0;
     _msIntegrated = 0;
-    /*
-    _initialCodePhase = init.codePhase;
-    */
+
     _initialCodePhase = init.codePhase;
 
     while (_initialCodePhase < 0.0f)
@@ -236,9 +232,7 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
         chipTravelDelay);
     /* End Debug*/
 
-    //_currentCommandedFreq = _oldCarrNco;
     _currentCommandedFreq = _carrFreqBasis;
-    //_carrNco.SetFrequency(_carrFreqBasis - (float)_doppler_hz);
     _carrNco.SetFrequency(_currentCommandedFreq);
     _codeNco.SetFrequency(_codeFreqBasis);
 
@@ -421,29 +415,13 @@ TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
     m.Late_Q = (float)acc.Lq * norm;
     m.dynamicT = (float)sampleCount / (float)_fs;
     m.P2 = m.I * m.I + m.Q * m.Q;
-    //        float sign_I = (m.I >= 0.0f) ? 1.0f : -1.0f;
-    //        float clean_I = m.I * sign_I;
-    //        float clean_Q = m.Q * sign_I;
+
     float raw =
         atan2f(m.Q, m.I); // Returns [-pi, pi] radians
         if (raw > (M_PI/2)) raw -= M_PI;
         else if (raw < (-M_PI/2)) raw += M_PI;
-        /*
-        (fabsf(m.I) > 1e-6f)
-            ? atanf(m.Q / m.I)
-            : 0.0f; */
-    /*    (clean_I > 1e-6f)
-            ? atanf(clean_Q / clean_I)
-            : 0.0f; */
 
-    // m.carrError = raw_angular_error / (2.0f * (float)M_PI);
     m.carrError = raw;
-
-    /*
-    if (fabs(m.carrError - _oldCarrError) > 0.5f)
-    {
-        m.carrError = _oldCarrError + (m.carrError * 0.1f);
-    } */
 
     m.E2 = m.Early_I * m.Early_I + m.Early_Q * m.Early_Q;
     m.L2 = m.Late_I * m.Late_I + m.Late_Q * m.Late_Q;
@@ -465,14 +443,6 @@ TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
 
 void ChannelProcessor::updateCarrierLoop(const TrackingMetrics &m)
 {
-    if (_pllHoldoffEpochs > 0)
-    {
-        _pllHoldoffEpochs--;
-        _currentCommandedFreq = _carrFreqBasis;
-        _carrNco.SetFrequency(_currentCommandedFreq);
-        _doppler_hz = _initialDopplerHz;
-        return;
-    }
 
     if (_snr < 8.0f)
     {
@@ -485,7 +455,6 @@ void ChannelProcessor::updateCarrierLoop(const TrackingMetrics &m)
         errorDelta = 0.0f;
     }
     // --- Unified Velocity-Form Loop Filter ---
-    // Matches the exact algebraic structure of the code loop, fixed from the typo.
     float carrNcoUpdate = _oldCarrNco + 
                           ((_carrLF.tau2 / _carrLF.tau1) * errorDelta) +
                           ((m.dynamicT / _carrLF.tau1) * m.carrError);
@@ -499,32 +468,6 @@ void ChannelProcessor::updateCarrierLoop(const TrackingMetrics &m)
 
     // Compute active Doppler shift
     _doppler_hz = _currentCommandedFreq - ReceiverConfig::L1_IF_HZ;
-
-    float dopplerDelta = _doppler_hz - _initialDopplerHz;
-
-    // Guard Band validation
-    if (fabsf(dopplerDelta) > 2000.0f)
-    {
-        _pllGuardTrips++;
-        _pllHoldoffEpochs = 50;
-
-        if(_pllGuardTrips >= 3)
-        {
-            _isLocked = false;
-            _enable_pll = false;
-        }
-
-        printf("\n[PLL GUARD] PRN %d doppler %.1f initial %.1f delta %.1f\n",
-               _prn, _doppler_hz, _initialDopplerHz, dopplerDelta);
-
-        _currentCommandedFreq = _carrFreqBasis;
-        _carrNco.SetFrequency(_currentCommandedFreq);
-
-        _doppler_hz = _initialDopplerHz;
-        _oldCarrNco = 0.0f;
-        _oldCarrError = 0.0f;
-        return;
-    }
 }
 
 void ChannelProcessor::updateCodeLoop(

@@ -581,6 +581,20 @@ bool TrackingEngine::step(
 
       state.total_tracked_ms++;
 
+   // Gear-shift loop filter bandwidths as tracking settles
+      if (state.total_tracked_ms == 1) 
+      {
+          state.processor->setLoopMode(LoopMode::Acquisition); // Wide: Carr 40 Hz, Code 20 Hz
+      }
+      else if (state.total_tracked_ms == 50) 
+      {
+          state.processor->setLoopMode(LoopMode::PullIn);      // Mid:  Carr 25 Hz, Code 10 Hz
+      }
+      else if (state.total_tracked_ms == 150) 
+      {
+          state.processor->setLoopMode(LoopMode::Tracking);    // Deep: Carr 15 Hz, Code 3 Hz
+      } 
+
 if (state.total_tracked_ms > 1000 && state.badLockEpochs >= 50)
 {
 printf("\n[LOCK LOST] PRN %d queued for focused reacquire\n", state.prn);

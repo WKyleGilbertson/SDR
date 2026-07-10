@@ -127,6 +127,7 @@ public:
     float getSNR() const { return (float)_snr; }
     void setInputIsComplex(bool is_complex) { _input_is_complex = is_complex; }
     void setLoopEnables(bool enable_pll, bool enable_dll);
+    void setLoopMode(LoopMode mode);
 //    void setSampleDump(FILE * pf, int max_samples);
     void enableSampleTrace( const char *filename, size_t samples);
     void setSampleGain(float gain) {_sampleGain = gain;};
@@ -186,14 +187,12 @@ private:
     float _sampleGain = 4.0f;
     void resetAccumulators(Accumulators &acc);
     void calculateSNR(Accumulators &acc, float &snr);
-    void setLoopMode(LoopMode mode);
+
     void calculateLoopCoefficients( LoopFilter &lf,
         float Bn   = -1.0f, float zeta = -1.0f, float gain = -1.0f);
     // Filter Coefficients
     LoopFilter _codeLF, _carrLF;
     uint32_t _trackingEpochs = 0;
-    uint32_t _pllHoldoffEpochs = 0;
-    uint32_t _pllGuardTrips = 0;
     float _fs;
     int _prn;
     float _initialDopplerHz = 0.0f;
