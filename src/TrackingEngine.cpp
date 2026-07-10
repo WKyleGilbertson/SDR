@@ -612,8 +612,13 @@ return did_work;
         //              epoch.Pi, epoch.Pq, epoch.sample_count, epoch.offset_samples);
         int pi_k = res.Pi / 1000;
         int pq_k = res.Pq / 1000;
+        printf("\r[TE]PRN %3d | SNR %5.1f | dF %7.1f | Code %8.3f | I %3dk | Q %3dk "
+              "N%02d R%4.2f",
+               res.prn, res.snr, res.doppler_hz, res.code_phase, pi_k, pq_k,
+              state.nav_phase_best, state.nav_phase_ratio);
+        /*
         printf(
-            "\r[TRK] %03d S%5.1f C%7.2f D%+7.1f Pi%+5dk Pq%+4dk N%02d R%4.2f",
+            "[TRK] %03d S%5.1f C%7.2f D%+7.1f Pi%+5dk Pq%+4dk N%02d R%4.2f",
             state.prn,
             res.snr,
             res.code_phase,
@@ -621,7 +626,7 @@ return did_work;
             pi_k,
             pq_k,
             state.nav_phase_best,
-            state.nav_phase_ratio);
+            state.nav_phase_ratio); */
 
         fflush(stdout);
 

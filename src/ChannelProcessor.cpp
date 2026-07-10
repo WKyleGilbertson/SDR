@@ -247,6 +247,8 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
         _ca_replica[i] = (int8_t)_m_sv.CODE[i];
 
     setLoopMode(LoopMode::Acquisition);
+    //setLoopMode(LoopMode::PullIn);
+    //setLoopMode(LoopMode::Tracking);
 
     if (_verboseInit)
     {
@@ -461,16 +463,13 @@ TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
     return m;
 }
 
-void ChannelProcessor::updateCarrierLoop(
-    const TrackingMetrics &m)
+void ChannelProcessor::updateCarrierLoop(const TrackingMetrics &m)
 {
     if (_pllHoldoffEpochs > 0)
     {
         _pllHoldoffEpochs--;
-
         _currentCommandedFreq = _carrFreqBasis;
         _carrNco.SetFrequency(_currentCommandedFreq);
-
         _doppler_hz = _initialDopplerHz;
         return;
     }
@@ -480,27 +479,31 @@ void ChannelProcessor::updateCarrierLoop(
         return;
     }
 
-    float kp = _carrLF.tau2 / _carrLF.tau1;
-    float ki = m.dynamicT / _carrLF.tau1;
+    float errorDelta = m.carrError - _oldCarrError;
+    if (fabsf(errorDelta) > 1.0f)
+    {
+        errorDelta = 0.0f;
+    }
+    // --- Unified Velocity-Form Loop Filter ---
+    // Matches the exact algebraic structure of the code loop, fixed from the typo.
+    float carrNcoUpdate = _oldCarrNco + 
+                          ((_carrLF.tau2 / _carrLF.tau1) * errorDelta) +
+                          ((m.dynamicT / _carrLF.tau1) * m.carrError);
 
-    _oldCarrNco += ki * m.carrError;
-
-    float carrNcoUpdate =
-        kp * m.carrError + _oldCarrNco;
-
+    _oldCarrNco = carrNcoUpdate;
     _oldCarrError = m.carrError;
 
-    _currentCommandedFreq =
-        _carrFreqBasis - carrNcoUpdate;
-
+    // Apply the correction to the basis frequency
+    _currentCommandedFreq = _carrFreqBasis - carrNcoUpdate;
     _carrNco.SetFrequency(_currentCommandedFreq);
 
-    //_doppler_hz = _currentCommandedFreq - 4.092e6f;
+    // Compute active Doppler shift
     _doppler_hz = _currentCommandedFreq - ReceiverConfig::L1_IF_HZ;
 
     float dopplerDelta = _doppler_hz - _initialDopplerHz;
 
-    if (fabsf(dopplerDelta) > 1000.0f)
+    // Guard Band validation
+    if (fabsf(dopplerDelta) > 2000.0f)
     {
         _pllGuardTrips++;
         _pllHoldoffEpochs = 50;
@@ -512,10 +515,7 @@ void ChannelProcessor::updateCarrierLoop(
         }
 
         printf("\n[PLL GUARD] PRN %d doppler %.1f initial %.1f delta %.1f\n",
-               _prn,
-               _doppler_hz,
-               _initialDopplerHz,
-               dopplerDelta);
+               _prn, _doppler_hz, _initialDopplerHz, dopplerDelta);
 
         _currentCommandedFreq = _carrFreqBasis;
         _carrNco.SetFrequency(_currentCommandedFreq);
@@ -525,22 +525,15 @@ void ChannelProcessor::updateCarrierLoop(
         _oldCarrError = 0.0f;
         return;
     }
-    /*    float carrNcoUpdate = _oldCarrNco + (_carrLF.tau2 / _carrLF.tau1) *
-                                                (m.carrError - _oldCarrError) *
-                                                (m.dynamicT / _carrLF.tau1);
-        _oldCarrNco = carrNcoUpdate;
-        _oldCarrError = m.carrError;
-        _currentCommandedFreq = _carrFreqBasis + carrNcoUpdate;
-        _carrNco.SetFrequency(_currentCommandedFreq);
-        _doppler_hz = _currentCommandedFreq - 4.092e6f;*/
 }
 
 void ChannelProcessor::updateCodeLoop(
     const TrackingMetrics &m)
 {
-    float codeNcoUpdate = _oldCodeNco + (_codeLF.tau2 / _codeLF.tau1) *
-                                            (m.codeError - _oldCodeError) *
-                                            (m.dynamicT / _codeLF.tau1);
+// Correct representation of a 2nd order loop update:
+float codeNcoUpdate = _oldCodeNco + (_codeLF.tau2 / _codeLF.tau1) * 
+                     (m.codeError - _oldCodeError) +
+                     (m.dynamicT / _codeLF.tau1) * m.codeError;                                      
     _oldCodeNco = codeNcoUpdate;
     _oldCodeError = m.codeError;
     _codeNco.SetFrequency(_codeFreqBasis + codeNcoUpdate +
@@ -583,11 +576,14 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
         return res;
     }
 
-    float boundary_code_phase = _codeNco.getCodePhase();
-
+    float sample_epoch_code_phase = _codeNco.getCodePhase();
+// TODO: res.code_phase should mean sample-epoch code phase at start of 1 ms buffer.
+// Do not overload this with DLL discriminator or rollover residual.
     // 1. Reduce signal to BaseBand
     runAccumulation(samples, availableSamples, res);
     // 2. Find Tracking Errors Moved to runAccmulation
+
+    res.code_phase = sample_epoch_code_phase;
 
     res.symbol = (res.Pi > 0) ? 1 : -1;
     res.numSymbols = 1;
