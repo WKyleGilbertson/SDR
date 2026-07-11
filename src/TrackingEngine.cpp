@@ -349,7 +349,7 @@ state.last_is_locked ? 1 : 0);
     state.nav_phase_best = best_phase;
     state.nav_phase_ratio = ratio;
 
-    printf(
+printf(
         "\n best=%02d %.1fk second=%02d %.1fk ratio=%.3f\n",
         best_phase,
         best_avg / 1000.0,
@@ -358,38 +358,19 @@ state.last_is_locked ? 1 : 0);
         ratio);
 
     printf("[NAVDEC]");
-    int best_dec_phase = -1;
-    int best_dec_score = -999999;
+    // Pull the high-res frame-sync metrics from the master decoder stream
+    int master_pre  = state.decoder[0]->getPreambleCandidateCount();
+    int master_pass = state.decoder[0]->getParityPassCount();
+    int master_fail = state.decoder[0]->getParityFailCount();
+    int master_score = master_pass * 20 - master_fail;
 
-    int best_pre = 0;
-    int best_pass = 0;
-    int best_fail = 0;
+    // Print the master stream tracking status cleanly
+    printf(" MasterStream(D00) p%d +%d -%d sc%d\n",
+           master_pre,
+           master_pass,
+           master_fail,
+           master_score);
 
-    for (int p = 0; p < 20; ++p)
-    {
-      int pre = state.decoder[p]->getPreambleCandidateCount();
-      int pass = state.decoder[p]->getParityPassCount();
-      int fail = state.decoder[p]->getParityFailCount();
-
-      int score = pass * 20 - fail;
-
-      if (score > best_dec_score)
-      {
-        best_dec_score = score;
-        best_dec_phase = p;
-
-        best_pre = pre;
-        best_pass = pass;
-        best_fail = fail;
-      }
-    }
-
-    printf(" D%02d p%d +%d -%d sc%d\n",
-           best_dec_phase,
-           best_pre,
-           best_pass,
-           best_fail,
-           best_dec_score);
   }
 
   char epoch_symbol = (sym > 0) ? '#' : '-';
@@ -613,6 +594,30 @@ return did_work;
 
       state.last_carrier_nco_hz = res.carrier_nco_hz;
       state.last_is_locked = res.is_locked;
+      // ==========================================================================
+      // INJECT HIGH-RES SLIDING PREAMBLE SEARCH ENGINE (WITH ACCELERATED FEED)
+      // ==========================================================================
+      // Make a mutable copy of the result to ensure lock conditions and 
+      // symbol segments are perfectly formed for the sliding matching logic.
+      CorrelatorResult master_res = res;
+      
+      // Force the lock state to true so the sliding register accumulates 
+      // history even while the tracking loop filters are pulling in.
+      master_res.is_locked = true; 
+
+      // Ensure the master result has at least the current 1ms epoch symbols populated
+      if (master_res.epochs.empty() && state.total_tracked_ms > 0)
+      {
+         // Fallback boundary safety: pull directly from the master prompt inversion
+         EpochResult dummy_epoch;
+         dummy_epoch.symbol = (res.Pi >= 0) ? 1 : -1;
+         dummy_epoch.Pi = res.Pi;
+         dummy_epoch.Pq = res.Pq;
+         master_res.epochs.push_back(dummy_epoch);
+      }
+
+      // Route the fortified continuous metrics through our master stream decoder
+      state.decoder[0]->processTrackingMetrics(master_res);
 
       for (const auto &epoch : res.epochs)
       {
