@@ -92,9 +92,6 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
                 _bitIntegrationI = 0.0;
                 _msInBitCounter = 0;
 
-                // Shift the clean, synchronized bit into our history tracking register
-                _shiftReg64 = (_shiftReg64 << 1) | packingBit;
-
                 // Case A: Looking for Frame Sync using pristine, un-smeared 20ms bits
                 // Shift the clean, synchronized bit into our history tracking register
                 _shiftReg64 = (_shiftReg64 << 1) | packingBit;
