@@ -160,7 +160,8 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
             {
                 _preambleCandidateCount++;
                 _frameSync = true;
-                _subframeBitIdx = 0;
+                //_subframeBitIdx = 0;
+                _subframeBitIdx = 8;
                 _consecutivePasses = 0;
                 _shiftReg64 = 0;
             }
@@ -256,6 +257,8 @@ bool NavDecoder::handleWord(int wordNum)
 
 void NavDecoder::processFramedBit(uint32_t bit)
 {
+    fprintf(stdout, "\n[NAV] PRN %3d | Received Bit: %2d | Word Counter: %d | Subframe Bit Index: %d\n",
+            _prn, bit, _wordCounter, _subframeBitIdx);
     _subframeBuffer[_subframeBitIdx++] = bit;
 
     if (_subframeBitIdx >= 30)
@@ -266,10 +269,11 @@ void NavDecoder::processFramedBit(uint32_t bit)
         uint32_t currentWord = 0;
         for (int i = 0; i < 30; i++)
             currentWord |= (_subframeBuffer[i] << (29 - i));
-// Debugging the raw bit stream
-printf("[DEBUG] Raw Bits: ");
-for(int i=0; i<30; i++) printf("%d", _subframeBuffer[i]);
-printf("\n");
+        // Debugging the raw bit stream
+        printf("[DEBUG] Raw Bits: ");
+        for (int i = 0; i < 30; i++)
+            printf("%d", _subframeBuffer[i]);
+        printf("\n");
         bool valid = isParityValid(currentWord, _d30Star);
         printf("[PARITY] Word %d: %08X | Valid: %s\n", _wordCounter, currentWord, valid ? "YES" : "NO");
 

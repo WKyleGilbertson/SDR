@@ -275,7 +275,7 @@ int main(int argc, char **argv)
          acqFine.peakIndex,
          acqFine.snr);
 
-    float coarseMapped = pcsToTrackerCodePhase(acq.codePhase);
+  float coarseMapped = pcsToTrackerCodePhase(acq.codePhase);
   float fineMapped = pcsToTrackerCodePhase(acqFine.codePhase);
 
   printf("[MAP] coarse_pcs=%.4f coarse_track=%.4f fine_pcs=%.4f fine_track=%.4f delta_track=%.4f chips\n",
@@ -313,47 +313,48 @@ int main(int argc, char **argv)
          acq.codePhase,
          track_acq.codePhase);
 
-float pcsA = acqFine.codePhase;
+  float pcsA = acqFine.codePhase;
 
-float pcsB16368 =
-    (float)((16368 - acqFine.peakIndex) % 16368) / 16.0f;
+  float pcsB16368 =
+      (float)((16368 - acqFine.peakIndex) % 16368) / 16.0f;
 
-float pcsB16384 =
-    (float)((ReceiverConfig::PCS_FFT_SIZE - acqFine.peakIndex) %
-              ReceiverConfig::PCS_FFT_SIZE) / 16.0f;
+  float pcsB16384 =
+      (float)((ReceiverConfig::PCS_FFT_SIZE - acqFine.peakIndex) %
+              ReceiverConfig::PCS_FFT_SIZE) /
+      16.0f;
 
-float mapped =
-    pcsToTrackerCodePhase(pcsA);
+  float mapped =
+      pcsToTrackerCodePhase(pcsA);
 
-printf("[SUMMARY] PRN=%d pcs=%.4f mapped=%.4f refined=%.4f dMapped=%.4f\n",
-       acqFine.prn,
-       acqFine.codePhase,
-       mapped,
-       track_acq.codePhase,
-       track_acq.codePhase - mapped);
+  printf("[SUMMARY] PRN=%d pcs=%.4f mapped=%.4f refined=%.4f dMapped=%.4f\n",
+         acqFine.prn,
+         acqFine.codePhase,
+         mapped,
+         track_acq.codePhase,
+         track_acq.codePhase - mapped);
 
-    FILE *cmp = fopen("pcs_vs_tracker_handoff.csv", "w");
-if (cmp)
-{
+  FILE *cmp = fopen("pcs_vs_tracker_handoff.csv", "w");
+  if (cmp)
+  {
     fprintf(cmp,
-        "prn,peakIndex,pcsA,pcsB16368,pcsB16384,"
-        "mapped,refined,dB16368,dB16384,dMapped\n");
+            "prn,peakIndex,pcsA,pcsB16368,pcsB16384,"
+            "mapped,refined,dB16368,dB16384,dMapped\n");
 
     fprintf(cmp,
-        "%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
-        acqFine.prn,
-        acqFine.peakIndex,
-        pcsA,
-        pcsB16368,
-        pcsB16384,
-        mapped,
-        track_acq.codePhase,
-        track_acq.codePhase - pcsB16368,
-        track_acq.codePhase - pcsB16384,
-        track_acq.codePhase - mapped);
+            "%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
+            acqFine.prn,
+            acqFine.peakIndex,
+            pcsA,
+            pcsB16368,
+            pcsB16384,
+            mapped,
+            track_acq.codePhase,
+            track_acq.codePhase - pcsB16368,
+            track_acq.codePhase - pcsB16384,
+            track_acq.codePhase - mapped);
 
     fclose(cmp);
-}
+  }
 
   G2INIT sv(track_acq.prn, 0);
 
@@ -372,13 +373,28 @@ if (cmp)
   FILE *csv = fopen("replay_tracking.csv", "w");
   writeReplayTrackingHeader(csv);
 
+  int bit_sum = 0;
+  int ms_count_for_bit = 0;
   for (size_t ms = 0; ms < ms_count; ++ms)
   {
     CorrelatorResult r =
         chan.Correlator(samples.data() + ms * ms_samples, ms_samples);
-        for(const auto& epoch : r.epochs) {
-            navDecoder.processFramedBit(epoch.symbol);
+
+    if (r.epoch_valid)
+    {
+
+      for (const auto &epoch : r.epochs)
+      {
+        bit_sum += epoch.Pi;
+        ms_count_for_bit++;
+        if (ms_count_for_bit == 20)
+        {
+          navDecoder.processFramedBit(epoch.symbol);
+          bit_sum = 0;          // Reset the sum
+          ms_count_for_bit = 0; // Reset the counter
         }
+      }
+    }
 
     writeReplayTrackingRow(csv, ms, r);
   }

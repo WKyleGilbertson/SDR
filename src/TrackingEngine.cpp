@@ -554,15 +554,6 @@ bool TrackingEngine::step(
       state.processor->setLoopEnables(true, true);
       CorrelatorResult res = state.processor->Correlator(ms_ptr, feed_samples);
 
-/* --- ADD THIS HAND-OFF ---
-if (res.epoch_valid) {
-    for (const auto& epoch : res.epochs) {
-        // Pass the symbols into the decoder
-        state.navDecoder.processFramedBit(epoch.symbol);
-    }
-}
-// -------------------------*/
-
     double pMag = std::hypot((double)res.Pi, (double)res.Pq);      
 
       bool badEpoch = ((res.snr < 6.0f) && (pMag < 8000));
