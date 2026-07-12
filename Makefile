@@ -58,6 +58,7 @@ TESTBENCH_OBJS = $(ODIR)/testbench.obj \
                  $(ODIR)/AcquisitionMgr.obj \
                  $(ODIR)/PCSEngine.obj \
                  $(ODIR)/ChannelProcessor.obj \
+                 $(ODIR)/NavDecoder.obj \
                  $(ODIR)/NCO.obj \
                  $(ODIR)/L1IFUtil.obj \
                  $(ODIR)/g2init.obj \

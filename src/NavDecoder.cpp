@@ -3,8 +3,14 @@
 #include <cstdio>
 #include <cstdlib>
 
-NavDecoder::NavDecoder(int prn) : _prn(prn), _subframeBuffer(300, 0)
+NavDecoder::NavDecoder(int prn, double fs) : _prn(prn), _fs_rate(fs), _subframeBuffer(300, 0)
 {
+    _msCounter = 0;
+    _totalBitsCounter = 0; // Initialize these!
+    _shiftReg64 = 0;
+    _subframeBitIdx = 0;
+    _wordCounter = 0;
+    _isInverted = false;
     _msCounter = 0;
     _bitOffset = -1;
     _bitSyncLocked = false;
@@ -28,171 +34,93 @@ NavDecoder::NavDecoder(int prn) : _prn(prn), _subframeBuffer(300, 0)
 void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
 {
     if (!metrics.is_locked || metrics.numSymbols <= 0)
-    {
         return;
-    }
 
-    for (int i = 0; i < metrics.numSymbols; ++i)
+    for (const auto &epoch : metrics.epochs)
     {
-        int8_t sym = metrics.symbols[i];
-        _msCounter++;
+        // 1. Calculate absolute millisecond index based on sample clock
+        // This ensures we are locked to the hardware's sample timeline
+        uint64_t ms_index = epoch.sample_tick / (uint64_t)(_fs_rate / 1000.0);
 
-        // =================================================================
-        // PHASE 1: BIT SYNC ALIGNMENT (Accumulates phase transitions)
-        // =================================================================
-        static double prevPi = 0.0;
-        if ((metrics.Pi > 0.0 && prevPi < 0.0) || (metrics.Pi < 0.0 && prevPi > 0.0))
-        {
-            uint32_t cellPhase = _msCounter % 20;
-            _sync.histograms[cellPhase]++;
-        }
-        prevPi = metrics.Pi;
+        // 2. Determine phase (0-19)
+        uint32_t current_phase = (uint32_t)(ms_index % 20);
 
-// Extend convergence to 4000ms to let tracking loops settle firmly
-        if (!_bitSyncLocked && _msCounter == 4000)
-        {
-            int maxFlips = 0;
-            int bestPhase = 0;
-            for (int b = 0; b < 20; ++b)
-            {
-                if (_sync.histograms[b] > maxFlips)
-                {
-                    maxFlips = _sync.histograms[b];
-                    bestPhase = b;
-                }
-            }
-            // Add a +1 ms phase offset modifier if your front-end sample clock has a constant lag
-            _bitOffset = bestPhase; 
-            _bitSyncLocked = true;
-            
-            printf("\n[INFO] PRN %d Bit Sync Firm Lock! Settled Phase: %d ms\n", _prn, _bitOffset);
-        }
-
-        // =================================================================
-        // PHASE 2 & 3: SYNCHRONIZED WORD INTEGRATION & DECODING LAYER
-        // =================================================================
-        
-        // Force alignment: Only start collecting energy if bit sync has initialized
+        // 3. Bit Synchronization Logic
+        // Instead of a simple counter, use the phase to trigger integration
+        // The _bitOffset is now our 'lock' point
         if (_bitSyncLocked)
         {
-            _msInBitCounter++;
-            _bitIntegrationI += sym; // Accumulate energy across the aligned 20ms block
-
-            // We hit a true 20ms bit boundary milestone
-            if (_msInBitCounter >= 20)
+            if (current_phase == _bitOffset)
             {
-                // Finalize the navigation bit state based on accumulated energy
-                int8_t integratedBit = (_bitIntegrationI > 0.0) ? 1 : -1;
-                
-                // Pack bit state based on whether our framing stream is inverted or normal
-                uint32_t packingBit = (_isInverted) ? (integratedBit < 0 ? 1 : 0)
-                                                    : (integratedBit > 0 ? 1 : 0);
+                // We are at the start of a new 20ms bit block
+                int8_t integratedBit = (_bitIntegrationI >= 0.0) ? 1 : -1;
 
-                // Reset block accumulators for the next bit
-                _bitIntegrationI = 0.0;
-                _msInBitCounter = 0;
+                // Process the completed bit
+                finalizeBit(integratedBit);
 
-                // Case A: Looking for Frame Sync using pristine, un-smeared 20ms bits
-                // Shift the clean, synchronized bit into our history tracking register
-                _shiftReg64 = (_shiftReg64 << 1) | packingBit;
-                uint8_t cleanByte = (uint8_t)(_shiftReg64 & 0xFF);
-
-                if (!_frameSync)
-                {
-                    // Unconditional diagnostic: print the sliding window to see if it's hitting
-                    static int byteDiagnosticCounter = 0;
-                    if (++byteDiagnosticCounter >= 10)
-                    {
-                        byteDiagnosticCounter = 0;
-                        printf("[NAV DIAGNOSTIC] PRN %d sliding byte: 0x%02X\n", _prn, cleanByte);
-                    }
-                    
-                    if (cleanByte == 0x8B) 
-                    {
-                        _frameSync = true;
-                        _isInverted = false;
-                        _subframeBitIdx = 0; // Reset counter so the NEXT 30 bits form Word 1
-                        _preambleCandidateCount++;
-                        printf("\n\n>>> SUCCESS: PRN %d Preamble Locked via 20ms Clean Stream! [NORMAL] <<<\n\n", _prn);
-                    }
-                    else if (cleanByte == 0x74) 
-                    {
-                        _frameSync = true;
-                        _isInverted = true;
-                        _subframeBitIdx = 0; // Reset counter so the NEXT 30 bits form Word 1
-                        _preambleCandidateCount++;
-                        printf("\n\n>>> SUCCESS: PRN %d Preamble Locked via 20ms Clean Stream! [INVERTED] <<<\n\n", _prn);
-                    }
-                }
-                // Case B: Frame Sync is active, parse bits into sequential 30-bit words
-                else
-                {
-                    _subframeBitIdx++;
-
-                    // Check for preamble validation on the fly right when Word 10 finishes and Word 1 begins
-                    static int wordCounter = 0;
-
-                    if (wordCounter == 10 && _subframeBitIdx == 8)
-                    {
-                        // We are 8 bits into what should be the new subframe's TLM word (Preamble location)
-                        uint8_t expectedPreamble = _isInverted ? 0x74 : 0x8B;
-                        if (cleanByte == expectedPreamble)
-                        {
-                            if (_isFocused) printf("[NAV STATE] Sequential Subframe Validation PASSED at Word 10 boundary!\n");
-                        }
-                        else
-                        {
-                            if (_isFocused) printf("[NAV WARNING] Subframe Validation FAILED at boundary. Expected 0x%02X, got 0x%02X. Dropping lock.\n", expectedPreamble, cleanByte);
-                            _frameSync = false;
-                            wordCounter = 0;
-                        }
-                    }
-
-                    if (_subframeBitIdx >= 30)
-                    {
-                        _subframeBitIdx = 0;
-                        wordCounter = (wordCounter % 10) + 1;
-
-                        uint32_t currentWord = (uint32_t)(_shiftReg64 & 0x3FFFFFFF);
-
-                        // Context swap storage safely into standard telemetry handler pipeline
-                        uint32_t originalRegBackup = _shiftReg;
-                        _shiftReg = currentWord;
-
-                        if (!handleWord(wordCounter))
-                        {
-                            if (_isFocused)
-                            {
-                                printf("[NAV] PRN %d Parity Fail Word %d. Dropping Sync.\n", _prn, wordCounter);
-                            }
-                            _frameSync = false;
-                            wordCounter = 0;
-                        }
-
-                        _shiftReg = originalRegBackup;
-                        // REMOVED: _shiftReg64 = 0; -> Let history slide naturally for preamble matching!
-                    }
-                }
+                // Reset for the next 20ms block
+                _bitIntegrationI = (double)epoch.symbol;
+            }
+            else
+            {
+                // Continue integrating energy
+                _bitIntegrationI += (double)epoch.symbol;
             }
         }
         else
         {
-            // Fallback / Pre-lock window: Visual character stream telemetry indicator
-            if (_isFocused)
+            // Bit Sync Search: Histogramming
+            // Check for transitions at this specific phase
+            static int64_t last_symbol = 0;
+            if (last_symbol != 0 && epoch.symbol != last_symbol)
             {
-                char navBitChar = (sym > 0) ? '#' : '-';
-                printf("%c", navBitChar);
+                _sync.histograms[current_phase]++;
+            }
+            last_symbol = epoch.symbol;
 
-                static int lineCounter = 0;
-                if (++lineCounter >= 60)
+            // Simple lock acquisition check
+            if (_msCounter++ > 5000)
+            {
+                int maxVal = 0;
+                for (int i = 0; i < 20; i++)
                 {
-                    lineCounter = 0;
-                    lineCounter = 0;
-                    printf(" |\n");
+                    if (_sync.histograms[i] > maxVal)
+                    {
+                        maxVal = _sync.histograms[i];
+                        _bitOffset = i;
+                    }
                 }
-                fflush(stdout);
+                _bitSyncLocked = true;
+                printf("[NAV] Sync Locked at offset %d\n", _bitOffset);
             }
         }
+    }
+}
+
+void NavDecoder::finalizeBit(int8_t bit)
+{
+    uint32_t val = (bit > 0) ? 1 : 0;
+    _shiftReg64 = (_shiftReg64 << 1) | val;
+    _totalBitsCounter++;
+
+    // 1. IF NOT SYNCED: Hunt for preamble
+    if (!_frameSync)
+    {
+        uint8_t window = (uint8_t)(_shiftReg64 & 0xFF);
+        if (window == 0x8B || window == 0x74)
+        {
+            _isInverted = (window == 0x74);
+            _frameSync = true;
+            _subframeBitIdx = 0;
+            _wordCounter = 1;
+            printf("\n[NAV] *** FRAME SYNC LOCKED (Polarity: %s) ***\n",
+                   _isInverted ? "INVERTED" : "NORMAL");
+        }
+    }
+    // 2. IF SYNCED: Do NOT look for preambles. Only process bits.
+    else
+    {
+        processFramedBit(val);
     }
 }
 
@@ -217,14 +145,22 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
             uint8_t fwdInverted = (~_shiftReg & 0xFF);
 
             bool match = false;
-            if (fwdNormal == 0x8B) { match = true; _isInverted = false; }
-            else if (fwdInverted == 0x8B) { match = true; _isInverted = true; }
+            if (fwdNormal == 0x8B)
+            {
+                match = true;
+                _isInverted = false;
+            }
+            else if (fwdInverted == 0x8B)
+            {
+                match = true;
+                _isInverted = true;
+            }
 
             if (match)
             {
                 _preambleCandidateCount++;
                 _frameSync = true;
-                _subframeBitIdx = 0; 
+                _subframeBitIdx = 0;
                 _consecutivePasses = 0;
                 _shiftReg64 = 0;
             }
@@ -239,7 +175,8 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
                 wordCounter = (wordCounter % 10) + 1;
 
                 uint32_t workingWord = _shiftReg & 0x3FFFFFFF;
-                if (_isInverted) workingWord = ~workingWord & 0x3FFFFFFF;
+                if (_isInverted)
+                    workingWord = ~workingWord & 0x3FFFFFFF;
 
                 uint32_t originalRegBackup = _shiftReg;
                 _shiftReg = workingWord;
@@ -300,7 +237,7 @@ bool NavDecoder::handleWord(int wordNum)
 
     if (wordNum == 2)
     {
-        uint32_t rawTOW = (_shiftReg >> 13) & 0x1FFFF; 
+        uint32_t rawTOW = (_shiftReg >> 13) & 0x1FFFF;
         _tow = rawTOW * 6;
 
         _subframeID = (_shiftReg >> 10) & 0x07;
@@ -315,4 +252,37 @@ bool NavDecoder::handleWord(int wordNum)
     _d29Star = (_shiftReg >> 1) & 1;
     _d30Star = _shiftReg & 1;
     return true;
+}
+
+void NavDecoder::processFramedBit(uint32_t bit)
+{
+    _subframeBuffer[_subframeBitIdx++] = bit;
+
+    if (_subframeBitIdx >= 30)
+    {
+        _subframeBitIdx = 0;
+
+        // --- ADD THIS LOGGING ---
+        uint32_t currentWord = 0;
+        for (int i = 0; i < 30; i++)
+            currentWord |= (_subframeBuffer[i] << (29 - i));
+// Debugging the raw bit stream
+printf("[DEBUG] Raw Bits: ");
+for(int i=0; i<30; i++) printf("%d", _subframeBuffer[i]);
+printf("\n");
+        bool valid = isParityValid(currentWord, _d30Star);
+        printf("[PARITY] Word %d: %08X | Valid: %s\n", _wordCounter, currentWord, valid ? "YES" : "NO");
+
+        handleWord(_wordCounter++);
+        if (_wordCounter > 10)
+        {
+            if (_parityFailCount > 20) // If we have 20 failed words in a row
+            {
+                _isInverted = !_isInverted; // Flip polarity
+                _parityFailCount = 0;       // Reset
+                printf("[NAV] *** Parity failed threshold, flipping polarity to: %s ***\n",
+                       _isInverted ? "INVERTED" : "NORMAL");
+            }
+        }
+    }
 }

@@ -5,6 +5,7 @@
 #include <cmath>
 #include "AcquisitionMgr.hpp"
 #include "PCSEngine.hpp"
+#include "NavDecoder.h"
 #include "L1IFUtil.hpp"
 #include "ChannelProcessor.h"
 #include "g2init.h"
@@ -360,6 +361,7 @@ if (cmp)
       (double)meta.fs_rate,
       track_acq,
       sv);
+  NavDecoder navDecoder(track_acq.prn, (double)meta.fs_rate);
 
   chan.setInputIsComplex(meta.input_is_complex);
   chan.setSampleGain(8.0f);
@@ -374,6 +376,9 @@ if (cmp)
   {
     CorrelatorResult r =
         chan.Correlator(samples.data() + ms * ms_samples, ms_samples);
+        for(const auto& epoch : r.epochs) {
+            navDecoder.processFramedBit(epoch.symbol);
+        }
 
     writeReplayTrackingRow(csv, ms, r);
   }

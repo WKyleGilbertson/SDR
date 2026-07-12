@@ -24,7 +24,7 @@ struct BitSync
 class NavDecoder
 {
 public:
-    NavDecoder(int prn);
+    NavDecoder(int prn, double fs);
     void processTrackingMetrics(const CorrelatorResult &metrics);
     void processBits(const std::vector<int8_t> &bits);
     void processBit(int8_t bit);
@@ -36,8 +36,13 @@ public:
     int getPreambleCandidateCount() const { return _preambleCandidateCount; }
     int getParityPassCount() const { return _parityPassCount; }
     int getParityFailCount() const { return _parityFailCount; }
+    void processFramedBit(uint32_t bit); // You'll need to define this or map it to handleWord
 
 private:
+    double _fs_rate;             // Needed to calculate ms from samples
+    
+    void finalizeBit(int8_t bit);
+    // ... rest of your existing members
     bool _isFocused = false;
     int _prn;
 
@@ -74,4 +79,7 @@ private:
     int _preambleCandidateCount = 0;
     int _parityPassCount = 0;
     int _parityFailCount = 0;
+    uint32_t _wordCounter = 0; // Track GPS subframe word indices (1 to 10.)
+    int _totalBitsCounter = 0;
+    int _lastPreambleBitLocation = -3000; // Initialize well out of range
 };

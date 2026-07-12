@@ -10,7 +10,7 @@ ChannelState::ChannelState(int p, double fs, const AcqResult &res, G2INIT s)
   processor = std::make_unique<ChannelProcessor>(fs, result, sv);
   for (int p = 0; p < 20; ++p)
   {
-    decoder[p] = std::make_unique<NavDecoder>(prn);
+    decoder[p] = std::make_unique<NavDecoder>(prn, fs);
   }
 }
 
@@ -447,10 +447,25 @@ bool TrackingEngine::step(
     ChannelState &state = *it;
   
     if (state.prn != (int)focusPRN) {
+      // Not our focus satellite: make sure its decoder isn't printing
+        for (int phase = 0; phase < 2; phase++) { // Adjust loop bounds if you have more than 2 phases
+            if (state.decoder[phase]) {
+                state.decoder[phase]->setFocus(false);
+            }
+        }
       ++it;
       continue;
   }
+    // =========================================================
+    // FOUND THE FOCUS TARGET: Enable printing for its decoders
+    // =========================================================
+    for (int phase = 0; phase < 2; phase++) { 
+        if (state.decoder[phase]) {
+            state.decoder[phase]->setFocus(true);
+        }
+    }
 
+    // Keep processing the rest of your focus-specific tracking logic below...
     while (true)
     {
       uint64_t write = rx.get_write_index();
@@ -539,6 +554,15 @@ bool TrackingEngine::step(
       state.processor->setLoopEnables(true, true);
       CorrelatorResult res = state.processor->Correlator(ms_ptr, feed_samples);
 
+/* --- ADD THIS HAND-OFF ---
+if (res.epoch_valid) {
+    for (const auto& epoch : res.epochs) {
+        // Pass the symbols into the decoder
+        state.navDecoder.processFramedBit(epoch.symbol);
+    }
+}
+// -------------------------*/
+
     double pMag = std::hypot((double)res.Pi, (double)res.Pq);      
 
       bool badEpoch = ((res.snr < 6.0f) && (pMag < 8000));
@@ -599,7 +623,7 @@ return did_work;
       // ==========================================================================
       // Make a mutable copy of the result to ensure lock conditions and 
       // symbol segments are perfectly formed for the sliding matching logic.
-      CorrelatorResult master_res = res;
+/*      CorrelatorResult master_res = res;
       
       // Force the lock state to true so the sliding register accumulates 
       // history even while the tracking loop filters are pulling in.
@@ -617,7 +641,7 @@ return did_work;
       }
 
       // Route the fortified continuous metrics through our master stream decoder
-      state.decoder[0]->processTrackingMetrics(master_res);
+      state.decoder[0]->processTrackingMetrics(master_res); */
 
       for (const auto &epoch : res.epochs)
       {
@@ -635,17 +659,6 @@ return did_work;
               "N%02d R%4.2f",
                res.prn, res.snr, res.doppler_hz, res.code_phase, pi_k, pq_k,
               state.nav_phase_best, state.nav_phase_ratio);
-        /*
-        printf(
-            "[TRK] %03d S%5.1f C%7.2f D%+7.1f Pi%+5dk Pq%+4dk N%02d R%4.2f",
-            state.prn,
-            res.snr,
-            res.code_phase,
-            res.doppler_hz,
-            pi_k,
-            pq_k,
-            state.nav_phase_best,
-            state.nav_phase_ratio); */
 
         fflush(stdout);
 
