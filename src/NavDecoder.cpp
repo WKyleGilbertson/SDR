@@ -133,37 +133,31 @@ void NavDecoder::processBit(int8_t bit)
 
 void NavDecoder::processBits(const std::vector<int8_t> &bits)
 {
-    // Kept intact for fallback unit tests processing pre-demodulated bit arrays
     for (int8_t bit : bits)
     {
         uint32_t bVal = (bit > 0) ? 1 : 0;
+        
+        // Apply Costas Loop phase correction
+        if (_costasInverted) bVal = 1 - bVal; 
+
         _shiftReg = ((_shiftReg << 1) | bVal) & 0xFFFFFFFF;
 
         if (!_frameSync)
         {
             uint8_t fwdNormal = (_shiftReg & 0xFF);
-            uint8_t fwdInverted = (~_shiftReg & 0xFF);
+            // We only look for the normal preamble now, because Costas correction
+            // handles the hardware flip, and D30* data toggles don't affect the TLM preamble.
+            // (The TLM word preamble is ALWAYS transmitted such that it appears as 0x8B 
+            // after the previous D30* inversion is applied at the transmitter).
 
-            bool match = false;
             if (fwdNormal == 0x8B)
-            {
-                match = true;
-                _isInverted = false;
-            }
-            else if (fwdInverted == 0x8B)
-            {
-                match = true;
-                _isInverted = true;
-            }
-
-            if (match)
             {
                 _preambleCandidateCount++;
                 _frameSync = true;
-                //_subframeBitIdx = 0;
                 _subframeBitIdx = 8;
                 _consecutivePasses = 0;
-                _shiftReg64 = 0;
+                _d30Star = 0; // Assume 0 for the first word
+                // We don't need _shiftReg64 anymore for this logic
             }
         }
         else
@@ -176,21 +170,70 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
                 wordCounter = (wordCounter % 10) + 1;
 
                 uint32_t workingWord = _shiftReg & 0x3FFFFFFF;
-                if (_isInverted)
-                    workingWord = ~workingWord & 0x3FFFFFFF;
-
                 uint32_t originalRegBackup = _shiftReg;
-                _shiftReg = workingWord;
 
                 if (!handleWord(wordCounter))
                 {
                     wordCounter = 0;
                     _frameSync = false;
+                    
+                    // If we fail parity on a candidate, maybe our Costas loop is inverted.
+                    // Flip the state and hunt again.
+                    _costasInverted = !_costasInverted; 
                 }
                 _shiftReg = originalRegBackup;
             }
         }
     }
+}
+
+bool NavDecoder::handleWord(int wordNum)
+{
+    // Parity check runs on the RAW bits using the D30* state we tracked
+    if (!isParityValid(_shiftReg, _d30Star))
+    {
+        _parityFailCount++;
+        _consecutivePasses = 0;
+        _frameSync = false;
+        return false;
+    }
+
+    _parityPassCount++;
+    _consecutivePasses++;
+
+    // Now that parity has passed, we safely invert the payload if needed
+    // to extract the actual navigation data
+    uint32_t payloadWord = _shiftReg;
+    if (_d30Star == 1) 
+    {
+        payloadWord = ~payloadWord & 0x3FFFFFFF;
+    }
+
+    if (wordNum == 1)
+    {
+        // Telemetry (TLM) subframe validation space
+    }
+
+    if (wordNum == 2)
+    {
+        // Extract from the correctly oriented payloadWord
+        uint32_t rawTOW = (payloadWord >> 13) & 0x1FFFF;
+        _tow = rawTOW * 6;
+
+        _subframeID = (payloadWord >> 10) & 0x07;
+
+        if (_isFocused)
+        {
+            printf("\n[NAV] PRN %d | Verified Word %d | Subframe: %d | GPS TOW: %u sec (%.2f hours into week)\n",
+                   _prn, wordNum, _subframeID, _tow, (double)_tow / 3600.0);
+        }
+    }
+
+    // Update D29* and D30* for the next word using the RAW parity bits
+    _d29Star = (_shiftReg >> 1) & 1;
+    _d30Star = _shiftReg & 1; 
+    
+    return true;
 }
 
 bool NavDecoder::isParityValid(uint32_t word, int lastD30)
@@ -216,43 +259,6 @@ uint32_t NavDecoder::getBits(int startBit, int len)
 {
     uint32_t mask = (1U << len) - 1;
     return (_shiftReg >> (30 - (startBit + len - 1))) & mask;
-}
-
-bool NavDecoder::handleWord(int wordNum)
-{
-    if (!isParityValid(_shiftReg, _d30Star))
-    {
-        _parityFailCount++;
-        _consecutivePasses = 0;
-        _frameSync = false;
-        return false;
-    }
-
-    _parityPassCount++;
-    _consecutivePasses++;
-
-    if (wordNum == 1)
-    {
-        // Telemetry (TLM) subframe validation space
-    }
-
-    if (wordNum == 2)
-    {
-        uint32_t rawTOW = (_shiftReg >> 13) & 0x1FFFF;
-        _tow = rawTOW * 6;
-
-        _subframeID = (_shiftReg >> 10) & 0x07;
-
-        if (_isFocused)
-        {
-            printf("\n[NAV] PRN %d | Verified Word %d | Subframe: %d | GPS TOW: %u sec (%.2f hours into week)\n",
-                   _prn, wordNum, _subframeID, _tow, (double)_tow / 3600.0);
-        }
-    }
-
-    _d29Star = (_shiftReg >> 1) & 1;
-    _d30Star = _shiftReg & 1;
-    return true;
 }
 
 void NavDecoder::processFramedBit(uint32_t bit)

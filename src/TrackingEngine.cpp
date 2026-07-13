@@ -357,20 +357,29 @@ printf(
         second_avg / 1000.0,
         ratio);
 
-    printf("[NAVDEC]");
-    // Pull the high-res frame-sync metrics from the master decoder stream
-    int master_pre  = state.decoder[0]->getPreambleCandidateCount();
-    int master_pass = state.decoder[0]->getParityPassCount();
-    int master_fail = state.decoder[0]->getParityFailCount();
-    int master_score = master_pass * 20 - master_fail;
+        printf("[NAVDEC]");
+    
+    // Safety check: ensure we actually have a best phase selected
+    if (state.nav_phase_best >= 0 && state.nav_phase_best < 20) 
+    {
+        int best_p = state.nav_phase_best;
+        int master_pre  = state.decoder[best_p]->getPreambleCandidateCount();
+        int master_pass = state.decoder[best_p]->getParityPassCount();
+        int master_fail = state.decoder[best_p]->getParityFailCount();
+        int master_score = master_pass * 20 - master_fail;
 
-    // Print the master stream tracking status cleanly
-    printf(" MasterStream(D00) p%d +%d -%d sc%d\n",
-           master_pre,
-           master_pass,
-           master_fail,
-           master_score);
-
+        // Print the winning stream tracking status cleanly
+        printf(" WinningStream(D%02d) p%d +%d -%d sc%d\n",
+               best_p,
+               master_pre,
+               master_pass,
+               master_fail,
+               master_score);
+    }
+    else
+    {
+        printf(" Waiting for phase lock...\n");
+    }
   }
 
   char epoch_symbol = (sym > 0) ? '#' : '-';

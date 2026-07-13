@@ -156,7 +156,7 @@ void ChannelProcessor::setLoopMode(LoopMode mode)
         break;
 
     case LoopMode::Tracking:
-        calculateLoopCoefficients(_carrLF, 15.0f, 0.707f, 1.0f);
+        calculateLoopCoefficients(_carrLF, 10.0f, 0.707f, 1.0f);
         calculateLoopCoefficients(_codeLF, 3.0f, 0.707f, 1.0f);
         fprintf(stdout, "\n[LOOPS] Tracking");
         break;

@@ -63,6 +63,7 @@ private:
     bool _reversed = false;
     int _subframeBitIdx = 0;
     int _lastBitOfPrevWord = 0;
+    bool _costasInverted = false;
 
     // FIX: Restored missing compilation fields here
     int _consecutivePasses = 0;
