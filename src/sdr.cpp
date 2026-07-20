@@ -17,7 +17,7 @@
 #include "TrackingEngine.h"
 #include "NavDecoder.h"
 
-// #define CAPTURE_TRACKING_DATA
+//#define CAPTURE_TRACKING_DATA
 
 static bool runFreshFocusedAcquisition(
     ElasticReceiver &rx,

@@ -22,13 +22,15 @@ struct ChannelState
     G2INIT sv;
 
     std::unique_ptr<ChannelProcessor> processor;
-    std::unique_ptr<NavDecoder> decoder[20];
+    //std::unique_ptr<NavDecoder> decoder[20];
+    std::unique_ptr<NavDecoder> decoder;
 
     std::deque<int8_t> epochSymbols;
-    int nav20_sum = 0;
-    int nav20_count = 0;
-    uint64_t nav20_groups = 0;
+    //int nav20_sum = 0;
+    //int nav20_count = 0;
+    //uint64_t nav20_groups = 0;
     uint64_t epoch_counter = 0;
+    /*
     int nav_phase_sum[20] = {};
     int nav_phase_score[20] = {};
     int nav_phase_windows[20] = {};
@@ -38,7 +40,7 @@ struct ChannelState
     bool nav_phase_has_prev_bit[20] = {};
     uint32_t nav_phase_flip_count[20] = {};
     int nav_phase_best = -1;
-    double nav_phase_ratio = 0.0;
+    double nav_phase_ratio = 0.0; */
     int8_t last_nav_bit = 0;
     double last_snr = 0.0;
     double last_doppler_hz = 0.0;

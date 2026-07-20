@@ -54,6 +54,7 @@ private:
     bool _bitSyncLocked = false;
     double _bitIntegrationI = 0.0;
     int _msInBitCounter = 0;
+    int8_t _last_symbol = 0;
 
     // Frame Sync & Word structural pipeline variables
     uint64_t _shiftReg64 = 0;

@@ -156,8 +156,8 @@ void ChannelProcessor::setLoopMode(LoopMode mode)
         break;
 
     case LoopMode::Tracking:
-        calculateLoopCoefficients(_carrLF, 10.0f, 0.707f, 1.0f);
-        calculateLoopCoefficients(_codeLF, 3.0f, 0.707f, 1.0f);
+        calculateLoopCoefficients(_carrLF, 15.0f, 0.707f, 1.0f);
+        calculateLoopCoefficients(_codeLF, 7.0f, 0.707f, 1.0f);
         fprintf(stdout, "\n[LOOPS] Tracking");
         break;
     }
@@ -422,6 +422,7 @@ TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
         else if (raw < (-M_PI/2)) raw += M_PI;
 
     m.carrError = raw;
+    //m.carrError = raw / (2.0f * (float)M_PI);
 
     m.E2 = m.Early_I * m.Early_I + m.Early_Q * m.Early_Q;
     m.L2 = m.Late_I * m.Late_I + m.Late_Q * m.Late_Q;
@@ -473,6 +474,21 @@ void ChannelProcessor::updateCarrierLoop(const TrackingMetrics &m)
 void ChannelProcessor::updateCodeLoop(
     const TrackingMetrics &m)
 {
+/*
+// For a carrier-aided DLL, a 1st order loop (proportional only) is highly stable.
+    // The carrier aiding provides the velocity tracking. The DLL only provides phase alignment.
+    
+    // Proportional gain based on tau1/tau2 from your loop config, or just a simple gain
+    float kp = 0.5f; 
+
+    float codeCorrection = kp * m.codeError; 
+
+    _oldCodeError = m.codeError; // Kept for logging if needed
+    
+    // NCO Frequency = Base + CarrierAiding + CodePhaseCorrection
+    _codeNco.SetFrequency(_codeFreqBasis + codeCorrection + 
+                          ((float)_doppler_hz / 1540.0f));  */
+
 // Correct representation of a 2nd order loop update:
 float codeNcoUpdate = _oldCodeNco + (_codeLF.tau2 / _codeLF.tau1) * 
                      (m.codeError - _oldCodeError) +
@@ -480,7 +496,7 @@ float codeNcoUpdate = _oldCodeNco + (_codeLF.tau2 / _codeLF.tau1) *
     _oldCodeNco = codeNcoUpdate;
     _oldCodeError = m.codeError;
     _codeNco.SetFrequency(_codeFreqBasis + codeNcoUpdate +
-                          ((float)_doppler_hz / 1540.0f));
+                          ((float)_doppler_hz / 1540.0f)); 
 }
 
 void ChannelProcessor::fillResult(

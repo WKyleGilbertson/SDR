@@ -56,7 +56,7 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
                 int8_t integratedBit = (_bitIntegrationI >= 0.0) ? 1 : -1;
 
                 // Process the completed bit
-                finalizeBit(integratedBit);
+                processBit(integratedBit);
 
                 // Reset for the next 20ms block
                 _bitIntegrationI = (double)epoch.symbol;
@@ -71,12 +71,11 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
         {
             // Bit Sync Search: Histogramming
             // Check for transitions at this specific phase
-            static int64_t last_symbol = 0;
-            if (last_symbol != 0 && epoch.symbol != last_symbol)
+            if (_last_symbol != 0 && epoch.symbol != _last_symbol)
             {
                 _sync.histograms[current_phase]++;
             }
-            last_symbol = epoch.symbol;
+            _last_symbol = epoch.symbol;
 
             // Simple lock acquisition check
             if (_msCounter++ > 5000)
@@ -137,27 +136,24 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
     {
         uint32_t bVal = (bit > 0) ? 1 : 0;
         
-        // Apply Costas Loop phase correction
-        if (_costasInverted) bVal = 1 - bVal; 
-
+        // Push raw bit into shift register. No manual Costas flipping required.
         _shiftReg = ((_shiftReg << 1) | bVal) & 0xFFFFFFFF;
 
         if (!_frameSync)
         {
             uint8_t fwdNormal = (_shiftReg & 0xFF);
-            // We only look for the normal preamble now, because Costas correction
-            // handles the hardware flip, and D30* data toggles don't affect the TLM preamble.
-            // (The TLM word preamble is ALWAYS transmitted such that it appears as 0x8B 
-            // after the previous D30* inversion is applied at the transmitter).
-
-            if (fwdNormal == 0x8B)
+            
+            // Search for BOTH normal (0x8B) and inverted (0x74) preambles
+            if (fwdNormal == 0x8B || fwdNormal == 0x74)
             {
                 _preambleCandidateCount++;
                 _frameSync = true;
                 _subframeBitIdx = 8;
                 _consecutivePasses = 0;
-                _d30Star = 0; // Assume 0 for the first word
-                // We don't need _shiftReg64 anymore for this logic
+                
+                // If it's inverted, D30* must be 1. 
+                // handleWord() will automatically un-invert the payload later!
+                _d30Star = (fwdNormal == 0x74) ? 1 : 0; 
             }
         }
         else
@@ -166,21 +162,18 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
             if (_subframeBitIdx >= 30)
             {
                 _subframeBitIdx = 0;
-                static int wordCounter = 0;
-                wordCounter = (wordCounter % 10) + 1;
+                _wordCounter = (_wordCounter % 10) + 1;
 
-                uint32_t workingWord = _shiftReg & 0x3FFFFFFF;
                 uint32_t originalRegBackup = _shiftReg;
-
-                if (!handleWord(wordCounter))
+                
+                if (!handleWord(_wordCounter))
                 {
-                    wordCounter = 0;
+                    _wordCounter = 0;
                     _frameSync = false;
-                    
-                    // If we fail parity on a candidate, maybe our Costas loop is inverted.
-                    // Flip the state and hunt again.
-                    _costasInverted = !_costasInverted; 
+                    // Parity failed (likely a false preamble). 
+                    // Resume hunting immediately without corrupting phase state.
                 }
+                
                 _shiftReg = originalRegBackup;
             }
         }
@@ -220,7 +213,8 @@ bool NavDecoder::handleWord(int wordNum)
         uint32_t rawTOW = (payloadWord >> 13) & 0x1FFFF;
         _tow = rawTOW * 6;
 
-        _subframeID = (payloadWord >> 10) & 0x07;
+        //_subframeID = (payloadWord >> 10) & 0x07;
+        _subframeID = (payloadWord >> 8) & 0x07;
 
         if (_isFocused)
         {

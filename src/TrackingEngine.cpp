@@ -8,20 +8,17 @@ ChannelState::ChannelState(int p, double fs, const AcqResult &res, G2INIT s)
     : prn(p), result(res), sv(s)
 {
   processor = std::make_unique<ChannelProcessor>(fs, result, sv);
-  for (int p = 0; p < 20; ++p)
-  {
-    decoder[p] = std::make_unique<NavDecoder>(prn, fs);
-  }
+  decoder = std::make_unique<NavDecoder>(prn, fs);
 }
 
 void TrackingEngine::resetNavAccumulation(ChannelState &state)
 {
   state.last_logged_sample_index = 0;
-  state.nav20_sum = 0;
-  state.nav20_count = 0;
-  state.nav20_groups = 0;
+//  state.nav20_sum = 0;
+//  state.nav20_count = 0;
+//  state.nav20_groups = 0;
   state.epochSymbols.clear();
-
+  /*
   for (int p = 0; p < 20; ++p)
   {
     state.nav_phase_sum[p] = 0;
@@ -32,8 +29,8 @@ void TrackingEngine::resetNavAccumulation(ChannelState &state)
     state.nav_phase_prev_bit[p] = 0;
     state.nav_phase_has_prev_bit[p] = false;
     state.nav_phase_flip_count[p] = 0;
-  }
-
+  } */
+  state.decoder->setFocus(false);
   state.epoch_counter = 0;
 }
 
@@ -87,9 +84,8 @@ bool TrackingEngine::beginTracking(
 
   state.processor->setInputIsComplex(rx.input_is_complex());
 
-  for (int phase = 0; phase < 20; ++phase)
-  {
-    state.decoder[phase]->setFocus(false);
+if (state.decoder) {
+      state.decoder->setFocus(false);
   }
 
   state.total_tracked_ms = 0;
@@ -274,6 +270,7 @@ state.last_is_locked ? 1 : 0);
     }
   }
 
+  /*
   for (int phase = 0; phase < 20; ++phase)
   {
     state.nav_phase_sum[phase] += sym;
@@ -301,10 +298,11 @@ state.last_is_locked ? 1 : 0);
       state.nav_phase_sum[phase] = 0;
       state.nav_phase_prompt_sum[phase] = 0;
     }
-  }
+  } */
 
   state.epoch_counter++;
 
+  /*
   if ((state.epoch_counter % 5000) == 0)
   {
     int best_phase = -1;
@@ -380,12 +378,12 @@ printf(
     {
         printf(" Waiting for phase lock...\n");
     }
-  }
+  } */
 
   char epoch_symbol = (sym > 0) ? '#' : '-';
 
   state.epochSymbols.push_back(sym);
-  state.nav20_sum += sym;
+/*  state.nav20_sum += sym;
   state.nav20_count++;
 
   if (state.nav20_count == 20)
@@ -403,7 +401,7 @@ printf(
 #endif
     state.nav20_sum = 0;
     state.nav20_count = 0;
-  }
+  } */
 
   uint64_t stable_fs_rate = (uint64_t)meta.fs_rate;
   uint64_t sub_second_ticks = epoch.sample_tick % stable_fs_rate;
@@ -454,6 +452,28 @@ bool TrackingEngine::step(
  for (auto it = activeChannels.begin(); it != activeChannels.end(); )
 {
     ChannelState &state = *it;
+    
+    // 1. Explicitly evaluate focus based on the requested PRN
+    bool isCurrentChannelFocused = (state.prn == (int)focusPRN);
+
+    // 2. Broadcast the focus state to ALL 20 parallel decoders
+    if (state.decoder) {
+        state.decoder->setFocus(isCurrentChannelFocused);
+    }
+    /*for (int phase = 0; phase < 20; phase++) { 
+        if (state.decoder[phase]) {
+            state.decoder[phase]->setFocus(isCurrentChannelFocused);
+        }
+    } */
+
+    if (!isCurrentChannelFocused) {
+        ++it;
+        continue;
+    }
+ /*
+ for (auto it = activeChannels.begin(); it != activeChannels.end(); )
+{
+    ChannelState &state = *it;
   
     if (state.prn != (int)focusPRN) {
       // Not our focus satellite: make sure its decoder isn't printing
@@ -464,15 +484,16 @@ bool TrackingEngine::step(
         }
       ++it;
       continue;
-  }
+  }  */
     // =========================================================
     // FOUND THE FOCUS TARGET: Enable printing for its decoders
     // =========================================================
+    /*
     for (int phase = 0; phase < 2; phase++) { 
         if (state.decoder[phase]) {
             state.decoder[phase]->setFocus(true);
         }
-    }
+    } */
 
     // Keep processing the rest of your focus-specific tracking logic below...
     while (true)
@@ -618,12 +639,12 @@ return did_work;
 
       state.last_carrier_nco_hz = res.carrier_nco_hz;
       state.last_is_locked = res.is_locked;
-      // ==========================================================================
+// ==========================================================================
       // INJECT HIGH-RES SLIDING PREAMBLE SEARCH ENGINE (WITH ACCELERATED FEED)
       // ==========================================================================
       // Make a mutable copy of the result to ensure lock conditions and 
       // symbol segments are perfectly formed for the sliding matching logic.
-/*      CorrelatorResult master_res = res;
+      CorrelatorResult master_res = res;
       
       // Force the lock state to true so the sliding register accumulates 
       // history even while the tracking loop filters are pulling in.
@@ -641,7 +662,9 @@ return did_work;
       }
 
       // Route the fortified continuous metrics through our master stream decoder
-      state.decoder[0]->processTrackingMetrics(master_res); */
+      if (state.decoder) {
+          state.decoder->processTrackingMetrics(master_res); 
+      }
 
       for (const auto &epoch : res.epochs)
       {
@@ -655,10 +678,10 @@ return did_work;
         //              epoch.Pi, epoch.Pq, epoch.sample_count, epoch.offset_samples);
         int pi_k = res.Pi / 1000;
         int pq_k = res.Pq / 1000;
-        printf("\r[TE]PRN %3d | SNR %5.1f | dF %7.1f | Code %8.3f | I %3dk | Q %3dk "
-              "N%02d R%4.2f",
-               res.prn, res.snr, res.doppler_hz, res.code_phase, pi_k, pq_k,
-              state.nav_phase_best, state.nav_phase_ratio);
+        printf("\r[TE]PRN %3d | SNR %5.1f | dF %7.1f | Code %8.3f | I %3dk | Q %3dk ",
+              //"N%02d R%4.2f",
+               res.prn, res.snr, res.doppler_hz, res.code_phase, pi_k, pq_k);
+            //  state.nav_phase_best, state.nav_phase_ratio);
 
         fflush(stdout);
 
