@@ -76,7 +76,7 @@ private:
     std::vector<uint8_t> _subframeBuffer;
     Observation _lastObservation = {0, 0, 0, 0, false};
     bool handleWord(int wordNum);
-    bool isParityValid(uint32_t word, int lastD30);
+    bool isParityValid(uint32_t word, int lastD29, int lastD30);
     uint32_t getBits(int startBit, int len);
     int _preambleCandidateCount = 0;
     int _parityPassCount = 0;
