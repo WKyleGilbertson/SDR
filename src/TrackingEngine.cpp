@@ -2,7 +2,6 @@
 #include "HandoffRefiner.hpp"
 #include <cmath>
 // #define TRK_LAG_DEBUG
-// #define DBG_NAV20
 
 ChannelState::ChannelState(int p, double fs, const AcqResult &res, G2INIT s)
     : prn(p), result(res), sv(s)
@@ -14,22 +13,8 @@ ChannelState::ChannelState(int p, double fs, const AcqResult &res, G2INIT s)
 void TrackingEngine::resetNavAccumulation(ChannelState &state)
 {
   state.last_logged_sample_index = 0;
-//  state.nav20_sum = 0;
-//  state.nav20_count = 0;
-//  state.nav20_groups = 0;
   state.epochSymbols.clear();
-  /*
-  for (int p = 0; p < 20; ++p)
-  {
-    state.nav_phase_sum[p] = 0;
-    state.nav_phase_score[p] = 0;
-    state.nav_phase_windows[p] = 0;
-    state.nav_phase_prompt_sum[p] = 0;
-    state.nav_phase_prompt_score[p] = 0;
-    state.nav_phase_prev_bit[p] = 0;
-    state.nav_phase_has_prev_bit[p] = false;
-    state.nav_phase_flip_count[p] = 0;
-  } */
+
   state.decoder->setFocus(false);
   state.epoch_counter = 0;
 }
@@ -270,138 +255,11 @@ state.last_is_locked ? 1 : 0);
     }
   }
 
-  /*
-  for (int phase = 0; phase < 20; ++phase)
-  {
-    state.nav_phase_sum[phase] += sym;
-    state.nav_phase_prompt_sum[phase] += prompt_i;
-
-    if (((state.epoch_counter + 1 + 20 - phase) % 20) == 0)
-    {
-      int64_t prompt_sum = state.nav_phase_prompt_sum[phase];
-
-      int8_t phase_bit =
-          (prompt_sum >= 0) ? 1 : -1;
-
-      state.decoder[phase]->processBit(phase_bit);
-
-      state.nav_phase_score[phase] +=
-          std::abs(state.nav_phase_sum[phase]);
-
-      state.nav_phase_prompt_score[phase] =
-          (state.nav_phase_prompt_score[phase] * 31 +
-           std::llabs(prompt_sum)) /
-          32;
-
-      state.nav_phase_windows[phase]++;
-
-      state.nav_phase_sum[phase] = 0;
-      state.nav_phase_prompt_sum[phase] = 0;
-    }
-  } */
-
   state.epoch_counter++;
-
-  /*
-  if ((state.epoch_counter % 5000) == 0)
-  {
-    int best_phase = -1;
-    int second_phase = -1;
-
-    double best_avg = -1.0;
-    double second_avg = -1.0;
-
-    printf("\n[NAVPHASE]");
-
-    for (int p = 0; p < 20; ++p)
-    {
-      double avg = 0.0;
-
-      if (state.nav_phase_windows[p] > 0)
-      {
-        avg = (double)state.nav_phase_prompt_score[p];
-      }
-
-      printf(" %02d:%.1fk", p, avg / 1000.0);
-
-      if (avg > best_avg)
-      {
-        second_avg = best_avg;
-        second_phase = best_phase;
-
-        best_avg = avg;
-        best_phase = p;
-      }
-      else if (avg > second_avg)
-      {
-        second_avg = avg;
-        second_phase = p;
-      }
-    }
-
-    double ratio =
-        (second_avg > 0.0)
-            ? (best_avg / second_avg)
-            : 0.0;
-
-    state.nav_phase_best = best_phase;
-    state.nav_phase_ratio = ratio;
-
-printf(
-        "\n best=%02d %.1fk second=%02d %.1fk ratio=%.3f\n",
-        best_phase,
-        best_avg / 1000.0,
-        second_phase,
-        second_avg / 1000.0,
-        ratio);
-
-        printf("[NAVDEC]");
-    
-    // Safety check: ensure we actually have a best phase selected
-    if (state.nav_phase_best >= 0 && state.nav_phase_best < 20) 
-    {
-        int best_p = state.nav_phase_best;
-        int master_pre  = state.decoder[best_p]->getPreambleCandidateCount();
-        int master_pass = state.decoder[best_p]->getParityPassCount();
-        int master_fail = state.decoder[best_p]->getParityFailCount();
-        int master_score = master_pass * 20 - master_fail;
-
-        // Print the winning stream tracking status cleanly
-        printf(" WinningStream(D%02d) p%d +%d -%d sc%d\n",
-               best_p,
-               master_pre,
-               master_pass,
-               master_fail,
-               master_score);
-    }
-    else
-    {
-        printf(" Waiting for phase lock...\n");
-    }
-  } */
 
   char epoch_symbol = (sym > 0) ? '#' : '-';
 
   state.epochSymbols.push_back(sym);
-/*  state.nav20_sum += sym;
-  state.nav20_count++;
-
-  if (state.nav20_count == 20)
-  {
-    int8_t nav_bit = (state.nav20_sum >= 0) ? 1 : -1;
-    state.nav20_groups++;
-#ifdef DBG_NAV20
-    if ((state.nav20_groups % 20) == 0)
-    {
-      printf("\n[NAV20] PRN %d bit=%c sum=%d\n",
-             state.prn,
-             nav_bit > 0 ? '#' : '-',
-             state.nav20_sum);
-    }
-#endif
-    state.nav20_sum = 0;
-    state.nav20_count = 0;
-  } */
 
   uint64_t stable_fs_rate = (uint64_t)meta.fs_rate;
   uint64_t sub_second_ticks = epoch.sample_tick % stable_fs_rate;
@@ -460,40 +318,11 @@ bool TrackingEngine::step(
     if (state.decoder) {
         state.decoder->setFocus(isCurrentChannelFocused);
     }
-    /*for (int phase = 0; phase < 20; phase++) { 
-        if (state.decoder[phase]) {
-            state.decoder[phase]->setFocus(isCurrentChannelFocused);
-        }
-    } */
 
     if (!isCurrentChannelFocused) {
         ++it;
         continue;
     }
- /*
- for (auto it = activeChannels.begin(); it != activeChannels.end(); )
-{
-    ChannelState &state = *it;
-  
-    if (state.prn != (int)focusPRN) {
-      // Not our focus satellite: make sure its decoder isn't printing
-        for (int phase = 0; phase < 2; phase++) { // Adjust loop bounds if you have more than 2 phases
-            if (state.decoder[phase]) {
-                state.decoder[phase]->setFocus(false);
-            }
-        }
-      ++it;
-      continue;
-  }  */
-    // =========================================================
-    // FOUND THE FOCUS TARGET: Enable printing for its decoders
-    // =========================================================
-    /*
-    for (int phase = 0; phase < 2; phase++) { 
-        if (state.decoder[phase]) {
-            state.decoder[phase]->setFocus(true);
-        }
-    } */
 
     // Keep processing the rest of your focus-specific tracking logic below...
     while (true)
@@ -662,9 +491,23 @@ return did_work;
       }
 
       // Route the fortified continuous metrics through our master stream decoder
+     // Route the fortified continuous metrics through our master stream decoder
       if (state.decoder) {
+           if (isCurrentChannelFocused) {
+              if (master_res.epochs.empty()) {
+                  printf("[WARNING-TE] master_res.epochs is empty! NavDecoder will starve.\n");
+              } 
+              //else {
+              //    printf("[DEBUG-TE] Handing off %zu epochs to NavDecoder for PRN %d\n", 
+              //           master_res.epochs.size(), state.prn);
+              //}
+          }
           state.decoder->processTrackingMetrics(master_res); 
       }
+        /*
+      if (state.decoder) {
+          state.decoder->processTrackingMetrics(master_res); 
+      } */
 
       for (const auto &epoch : res.epochs)
       {

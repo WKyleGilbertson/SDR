@@ -55,6 +55,11 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
                 // We are at the start of a new 20ms bit block
                 int8_t integratedBit = (_bitIntegrationI >= 0.0) ? 1 : -1;
 
+                /* if (_isFocused)
+                {
+                    printf("[DEBUG-NAV] 20ms integration complete. Yielded bit: %d (Integration Sum: %.1f)\n",
+                           integratedBit, _bitIntegrationI);
+                } */
                 // Process the completed bit
                 processBit(integratedBit);
 
@@ -132,17 +137,27 @@ void NavDecoder::processBit(int8_t bit)
 
 void NavDecoder::processBits(const std::vector<int8_t> &bits)
 {
+    /* if (_isFocused && !bits.empty())
+    {
+        printf("[DEBUG-NAV] processBits received batch of size: %zu\n", bits.size());
+    } */
     for (int8_t bit : bits)
     {
         uint32_t bVal = (bit > 0) ? 1 : 0;
-        
+
         // Push raw bit into shift register. No manual Costas flipping required.
         _shiftReg = ((_shiftReg << 1) | bVal) & 0xFFFFFFFF;
+
+        /* if (_isFocused && !_frameSync)
+        {
+            printf("[DEBUG-NAV] Hunting Preamble... ShiftReg: 0x%08X | FwdNormal: 0x%02X\n",
+                   _shiftReg, (_shiftReg & 0xFF));
+        } */
 
         if (!_frameSync)
         {
             uint8_t fwdNormal = (_shiftReg & 0xFF);
-            
+
             // Search for BOTH normal (0x8B) and inverted (0x74) preambles
             if (fwdNormal == 0x8B || fwdNormal == 0x74)
             {
@@ -150,10 +165,13 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
                 _frameSync = true;
                 _subframeBitIdx = 8;
                 _consecutivePasses = 0;
-                
-                // If it's inverted, D30* must be 1. 
+
+                // If it's inverted, D30* must be 1.
                 // handleWord() will automatically un-invert the payload later!
-                _d30Star = (fwdNormal == 0x74) ? 1 : 0; 
+                _d30Star = (fwdNormal == 0x74) ? 1 : 0;
+            if (_isFocused) {
+                    printf("\n[NAV] Preamble Candidate (0x%02X) found! Checking parity in 22 bits...\n", fwdNormal);
+                }
             }
         }
         else
@@ -165,15 +183,15 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
                 _wordCounter = (_wordCounter % 10) + 1;
 
                 uint32_t originalRegBackup = _shiftReg;
-                
+
                 if (!handleWord(_wordCounter))
                 {
                     _wordCounter = 0;
                     _frameSync = false;
-                    // Parity failed (likely a false preamble). 
+                    // Parity failed (likely a false preamble).
                     // Resume hunting immediately without corrupting phase state.
                 }
-                
+
                 _shiftReg = originalRegBackup;
             }
         }
@@ -188,16 +206,21 @@ bool NavDecoder::handleWord(int wordNum)
         _parityFailCount++;
         _consecutivePasses = 0;
         _frameSync = false;
+ if (_isFocused) {
+            printf("[NAV] Parity FAILED. False preamble. Resuming hunt...\n");
+        }       
         return false;
     }
 
     _parityPassCount++;
     _consecutivePasses++;
-
+if (_isFocused) {
+        printf("[NAV] Parity PASSED for Word %d!\n", wordNum);
+    }
     // Now that parity has passed, we safely invert the payload if needed
     // to extract the actual navigation data
     uint32_t payloadWord = _shiftReg;
-    if (_d30Star == 1) 
+    if (_d30Star == 1)
     {
         payloadWord = ~payloadWord & 0x3FFFFFFF;
     }
@@ -225,8 +248,8 @@ bool NavDecoder::handleWord(int wordNum)
 
     // Update D29* and D30* for the next word using the RAW parity bits
     _d29Star = (_shiftReg >> 1) & 1;
-    _d30Star = _shiftReg & 1; 
-    
+    _d30Star = _shiftReg & 1;
+
     return true;
 }
 
