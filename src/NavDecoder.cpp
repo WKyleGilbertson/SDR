@@ -137,22 +137,17 @@ void NavDecoder::processBit(int8_t bit)
 
 void NavDecoder::processBits(const std::vector<int8_t> &bits)
 {
-    /* if (_isFocused && !bits.empty())
-    {
-        printf("[DEBUG-NAV] processBits received batch of size: %zu\n", bits.size());
-    } */
     for (int8_t bit : bits)
     {
         uint32_t bVal = (bit > 0) ? 1 : 0;
 
-        // Push raw bit into shift register. No manual Costas flipping required.
-        _shiftReg = ((_shiftReg << 1) | bVal) & 0xFFFFFFFF;
+        // Apply global stream inversion if active
+        if (_isInverted) {
+            bVal = !bVal;
+        }
 
-        /* if (_isFocused && !_frameSync)
-        {
-            printf("[DEBUG-NAV] Hunting Preamble... ShiftReg: 0x%08X | FwdNormal: 0x%02X\n",
-                   _shiftReg, (_shiftReg & 0xFF));
-        } */
+        // Push corrected raw bit into shift register
+        _shiftReg = ((_shiftReg << 1) | bVal) & 0xFFFFFFFF;
 
         if (!_frameSync)
         {
@@ -166,11 +161,14 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
                 _subframeBitIdx = 8;
                 _consecutivePasses = 0;
 
-                // If it's inverted, D30* must be 1.
-                // handleWord() will automatically un-invert the payload later!
-                _d30Star = (fwdNormal == 0x74) ? 1 : 0;
-            if (_isFocused) {
-                    printf("\n[NAV] Preamble Candidate (0x%02X) found! Checking parity in 22 bits...\n", fwdNormal);
+                // Set global stream inversion based on preamble type
+                _isInverted = (fwdNormal == 0x74);
+                _d30Star = _isInverted ? 1 : 0;
+                
+                if (_isFocused)
+                {
+                    printf("\n[NAV] Preamble Candidate (0x%02X) found! Polarity: %s\n", 
+                           fwdNormal, _isInverted ? "INVERTED" : "NORMAL");
                 }
             }
         }
@@ -182,17 +180,14 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
                 _subframeBitIdx = 0;
                 _wordCounter = (_wordCounter % 10) + 1;
 
-                uint32_t originalRegBackup = _shiftReg;
-
+                // Evaluate the completed 30-bit word in the shift register
                 if (!handleWord(_wordCounter))
                 {
-                    _wordCounter = 0;
-                    _frameSync = false;
-                    // Parity failed (likely a false preamble).
-                    // Resume hunting immediately without corrupting phase state.
+                    if (!_frameSync)
+                    {
+                        _wordCounter = 0;
+                    }
                 }
-
-                _shiftReg = originalRegBackup;
             }
         }
     }
@@ -208,26 +203,26 @@ bool NavDecoder::handleWord(int wordNum)
         printf("\n");
     }
 
-    // 1. Try checking parity with current polarity state
+    // 1. Try checking parity with current state
     bool valid = isParityValid(_shiftReg, _d29Star, _d30Star);
 
-    // 2. If it fails, try the inverted polarity (Costas 180-degree ambiguity fix)
+    // 2. If it fails, test the opposite polarity
     if (!valid)
     {
         uint32_t invertedWord = ~_shiftReg & 0x3FFFFFFF;
-        // Also invert the trailing bit states for the test
         if (isParityValid(invertedWord, !_d29Star, !_d30Star))
         {
-            // The inverted word is actually the correct one! 
-            // Flip our internal tracking state to match the signal's current polarity.
+            // Permanently flip global stream polarity state
+            _isInverted = !_isInverted;
             _d30Star = !_d30Star;
             _d29Star = !_d29Star;
-            // Force the shift register to use the corrected word
-            _shiftReg = invertedWord;
+            
+            // Preserve top bits of shift register while correcting the lower 30 bits
+            _shiftReg = (_shiftReg & 0xC0000000) | invertedWord;
             valid = true;
             
             if (_isFocused) {
-                printf("[NAV] Polarity flip detected! Auto-corrected word %d.\n", wordNum);
+                printf("[NAV] Polarity flip detected! Permanently flipping stream polarity.\n");
             }
         }
     }
@@ -236,14 +231,24 @@ bool NavDecoder::handleWord(int wordNum)
     {
         _parityFailCount++;
         _consecutivePasses = 0;
-        _frameSync = false;
         
-        if (_isFocused) {
-            printf("[NAV] Parity FAILED. False preamble. Resuming hunt...\n");
+        if (_parityFailCount > 3) 
+        {
+            _frameSync = false;
+            if (_isFocused) {
+                printf("[NAV] Too many consecutive parity failures (%d). Dropping frame sync.\n", _parityFailCount);
+            }
+        }
+        else 
+        {
+            if (_isFocused) {
+                printf("[NAV] Parity failed for word %d (Failure count: %d), but maintaining frame sync...\n", wordNum, _parityFailCount);
+            }
         }
         return false;
     }
 
+    _parityFailCount = 0;
     _parityPassCount++;
     _consecutivePasses++;
 
@@ -251,12 +256,8 @@ bool NavDecoder::handleWord(int wordNum)
         printf("[NAV] Parity PASSED for Word %d!\n", wordNum);
     }
 
-    // Now that parity has passed, safely extract payload data
-    uint32_t payloadWord = _shiftReg;
-    if (_d30Star == 1) 
-    {
-        payloadWord = ~payloadWord & 0x3FFFFFFF;
-    }
+    // Payload is already normalized via global _isInverted correction
+    uint32_t payloadWord = _shiftReg & 0x3FFFFFFF;
 
     if (wordNum == 2)
     {
@@ -271,74 +272,12 @@ bool NavDecoder::handleWord(int wordNum)
         }
     }
 
-    // Update D29* and D30* for the next word using the final evaluated bits
+    // Update D29* and D30* for the next word
     _d29Star = (_shiftReg >> 1) & 1;
     _d30Star = _shiftReg & 1; 
     
     return true;
 }
-/*
-bool NavDecoder::handleWord(int wordNum)
-{
-  if (_isFocused) {
-        printf("[NAV] Word %d Candidate Raw Bits: ", wordNum);
-        for (int i = 29; i >= 0; i--) {
-            printf("%d", (_shiftReg >> i) & 1);
-        }
-        printf("\n");
-    }  
-    // Parity check runs on the RAW bits using the D30* state we tracked
-    if (!isParityValid(_shiftReg, _d29Star, _d30Star))
-    {
-        _parityFailCount++;
-        _consecutivePasses = 0;
-        _frameSync = false;
- if (_isFocused) {
-            printf("[NAV] Parity FAILED. False preamble. Resuming hunt...\n");
-        }       
-        return false;
-    }
-
-    _parityPassCount++;
-    _consecutivePasses++;
-if (_isFocused) {
-        printf("[NAV] Parity PASSED for Word %d!\n", wordNum);
-    }
-    // Now that parity has passed, we safely invert the payload if needed
-    // to extract the actual navigation data
-    uint32_t payloadWord = _shiftReg;
-    if (_d30Star == 1)
-    {
-        payloadWord = ~payloadWord & 0x3FFFFFFF;
-    }
-
-    if (wordNum == 1)
-    {
-        // Telemetry (TLM) subframe validation space
-    }
-
-    if (wordNum == 2)
-    {
-        // Extract from the correctly oriented payloadWord
-        uint32_t rawTOW = (payloadWord >> 13) & 0x1FFFF;
-        _tow = rawTOW * 6;
-
-        //_subframeID = (payloadWord >> 10) & 0x07;
-        _subframeID = (payloadWord >> 8) & 0x07;
-
-        if (_isFocused)
-        {
-            printf("\n[NAV] PRN %d | Verified Word %d | Subframe: %d | GPS TOW: %u sec (%.2f hours into week)\n",
-                   _prn, wordNum, _subframeID, _tow, (double)_tow / 3600.0);
-        }
-    }
-
-    // Update D29* and D30* for the next word using the RAW parity bits
-    _d29Star = (_shiftReg >> 1) & 1;
-    _d30Star = _shiftReg & 1;
-
-    return true;
-} */
 
 bool NavDecoder::isParityValid(uint32_t word, int lastD29, int lastD30)
 {
@@ -360,25 +299,6 @@ bool NavDecoder::isParityValid(uint32_t word, int lastD29, int lastD30)
     // Validate the 6 computed parity bits against the 6 received parity bits (D25 - D30)
     return (p1 == d[25] && p2 == d[26] && p3 == d[27] && p4 == d[28] && p5 == d[29] && p6 == d[30]);
 }
-/*
-bool NavDecoder::isParityValid(uint32_t word, int lastD29, int lastD30)
-{
-    // Fall back to clean array mapping to eliminate hardware bit shift direction bugs
-    uint32_t d[31];
-    for (int i = 1; i <= 30; ++i)
-    {
-        d[i] = (word >> (30 - i)) & 1;
-    }
-
-    uint32_t p1 = d[1] ^ d[2] ^ d[3] ^ d[5] ^ d[6] ^ d[10] ^ d[11] ^ d[12] ^ d[13] ^ d[14] ^ d[17] ^ d[18] ^ d[20] ^ d[23] ^ lastD30;
-    uint32_t p2 = d[2] ^ d[3] ^ d[4] ^ d[6] ^ d[7] ^ d[11] ^ d[12] ^ d[13] ^ d[14] ^ d[15] ^ d[18] ^ d[19] ^ d[21] ^ d[24];
-    uint32_t p3 = d[1] ^ d[3] ^ d[4] ^ d[5] ^ d[7] ^ d[8] ^ d[12] ^ d[13] ^ d[14] ^ d[15] ^ d[16] ^ d[19] ^ d[20] ^ d[22];
-    uint32_t p4 = d[2] ^ d[4] ^ d[5] ^ d[6] ^ d[8] ^ d[9] ^ d[13] ^ d[14] ^ d[15] ^ d[16] ^ d[17] ^ d[20] ^ d[21] ^ d[23];
-    uint32_t p5 = d[2] ^ d[3] ^ d[5] ^ d[6] ^ d[7] ^ d[9] ^ d[10] ^ d[14] ^ d[15] ^ d[16] ^ d[17] ^ d[18] ^ d[21] ^ d[22] ^ d[24];
-    uint32_t p6 = d[1] ^ d[5] ^ d[6] ^ d[8] ^ d[9] ^ d[10] ^ d[12] ^ d[13] ^ d[15] ^ d[16] ^ d[18] ^ d[19] ^ d[22] ^ d[23] ^ lastD30;
-
-    return (p1 == d[25] && p2 == d[26] && p3 == d[27] && p4 == d[28] && p5 == d[29] && p6 == d[30]);
-} */
 
 uint32_t NavDecoder::getBits(int startBit, int len)
 {
