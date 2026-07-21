@@ -104,6 +104,7 @@ struct TrackingMetrics
     float L2 = 0.0f;
 
     float carrError = 0.0f;
+    float fllError = 0.0f;
     float codeError = 0.0f;
 
     float dynamicT = 0.001f;
@@ -128,9 +129,10 @@ public:
     void setInputIsComplex(bool is_complex) { _input_is_complex = is_complex; }
     void setLoopEnables(bool enable_pll, bool enable_dll);
     void setLoopMode(LoopMode mode);
+    void setUseFLL(bool use_fll) {_use_fll = use_fll; }
 //    void setSampleDump(FILE * pf, int max_samples);
     void enableSampleTrace( const char *filename, size_t samples);
-    void setSampleGain(float gain) {_sampleGain = gain;};
+    void setSampleGain(float gain) {_sampleGain = gain;}
     void dumpSampleTrace(
         const RawSample &sample,
         uint32_t carrIdx,
@@ -182,6 +184,7 @@ private:
     float _currentCommandedFreq = 0.0f;
     Accumulators _acc;
     Accumulators _epochAcc;
+    Accumulators _prevEpochAcc;
     uint32_t _epochSampleCount = 0;
     uint64_t _sampleCounter = 0;
     float _sampleGain = 4.0f;
@@ -210,6 +213,7 @@ private:
     bool _input_is_complex = true;
     bool _enable_pll = true;
     bool _enable_dll = true;
+    bool _use_fll = true;
     FILE * _sampleDump = nullptr;
     int _sampleDumpRemaining = 0;
     bool _verboseInit = true;

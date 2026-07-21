@@ -5,6 +5,7 @@
 
 NavDecoder::NavDecoder(int prn, double fs) : _prn(prn), _fs_rate(fs), _subframeBuffer(300, 0)
 {
+    _last_symbol = 0;
     _msCounter = 0;
     _totalBitsCounter = 0; // Initialize these!
     _shiftReg64 = 0;
@@ -12,7 +13,7 @@ NavDecoder::NavDecoder(int prn, double fs) : _prn(prn), _fs_rate(fs), _subframeB
     _wordCounter = 0;
     _isInverted = false;
     _msCounter = 0;
-    _bitOffset = -1;
+    _bitOffset = 0;
     _bitSyncLocked = false;
     _bitIntegrationI = 0.0;
     _msInBitCounter = 0;
@@ -37,51 +38,43 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
 
     for (const auto &epoch : metrics.epochs)
     {
-        // 1. Calculate absolute millisecond index based on sample clock
-        // This ensures we are locked to the hardware's sample timeline
-        uint64_t ms_index = epoch.sample_tick / (uint64_t)(_fs_rate / 1000.0);
+        uint32_t current_phase = (uint32_t)(_decoderSampleCounter % 20);
+        _decoderSampleCounter++; 
 
-        // 2. Determine phase (0-19)
-        uint32_t current_phase = (uint32_t)(ms_index % 20);
-
-        // 3. Bit Synchronization Logic
-        // Instead of a simple counter, use the phase to trigger integration
-        // The _bitOffset is now our 'lock' point
         if (_bitSyncLocked)
         {
             if (current_phase == _bitOffset)
             {
                 // We are at the start of a new 20ms bit block
                 int8_t integratedBit = (_bitIntegrationI >= 0.0) ? 1 : -1;
-
-                /* if (_isFocused)
-                {
-                    printf("[DEBUG-NAV] 20ms integration complete. Yielded bit: %d (Integration Sum: %.1f)\n",
-                           integratedBit, _bitIntegrationI);
-                } */
-                // Process the completed bit
                 processBit(integratedBit);
-
-                // Reset for the next 20ms block
                 _bitIntegrationI = (double)epoch.symbol;
             }
             else
             {
-                // Continue integrating energy
                 _bitIntegrationI += (double)epoch.symbol;
             }
         }
         else
         {
+            // --- NEW: FLL Noise Gating ---
+            // Wait for the FLL pull-in stage (first ~1000ms) to finish settling 
+            // the carrier phase before trusting symbol transitions.
+            if (_decoderSampleCounter < 1000)
+            {
+                _last_symbol = epoch.symbol;
+                continue; 
+            }
+            // -----------------------------
+
             // Bit Sync Search: Histogramming
-            // Check for transitions at this specific phase
             if (_last_symbol != 0 && epoch.symbol != _last_symbol)
             {
                 _sync.histograms[current_phase]++;
             }
             _last_symbol = epoch.symbol;
 
-            // Simple lock acquisition check
+            // Lock acquisition check (requires 5000 clean ms of data)
             if (_msCounter++ > 5000)
             {
                 int maxVal = 0;

@@ -172,6 +172,9 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
     _codeFreqBasis = ReceiverConfig::CODE_FREQ_HZ;
     resetAccumulators(_acc);
     resetAccumulators(_epochAcc);
+    resetAccumulators(_epochAcc);
+    resetAccumulators(_prevEpochAcc);
+    _use_fll = true;
     _epochSampleCount = 0;
     _snr = -999.0f;
     _isLocked = false;
@@ -241,8 +244,8 @@ ChannelProcessor::ChannelProcessor(double fs_rate, const AcqResult &init,
         _ca_replica[i] = (int8_t)_m_sv.CODE[i];
 
     setLoopMode(LoopMode::Acquisition);
-    //setLoopMode(LoopMode::PullIn);
-    //setLoopMode(LoopMode::Tracking);
+    // setLoopMode(LoopMode::PullIn);
+    // setLoopMode(LoopMode::Tracking);
 
     if (_verboseInit)
     {
@@ -331,9 +334,9 @@ void ChannelProcessor::runAccumulation(
             last_rot = now_rot;
         }
 
-        #ifdef SAMPLE_TRACE
+#ifdef SAMPLE_TRACE
         dumpSampleTrace(samples[i], carrIdx, c, s, bb_i, bb_q, prompt_i_term, prompt_q_term);
-        #endif
+#endif
 
         if (_codeNco.getRotations() < prev_rotations)
         {
@@ -416,13 +419,26 @@ TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
     m.dynamicT = (float)sampleCount / (float)_fs;
     m.P2 = m.I * m.I + m.Q * m.Q;
 
+    // --- NEW: FLL Cross-Product Discriminator ---
+    float dot = (float)(acc.Pi * _prevEpochAcc.Pi + acc.Pq * _prevEpochAcc.Pq);
+    float cross = (float)(acc.Pq * _prevEpochAcc.Pi - acc.Pi * _prevEpochAcc.Pq);
+
+    // Returns the phase shift over the last 1ms epoch in radians
+    m.fllError = atan2f(cross, dot);
+
+    // Store current accumulators for the next epoch's FLL calculation
+    _prevEpochAcc = acc;
+    // --------------------------------------------
+
     float raw =
         atan2f(m.Q, m.I); // Returns [-pi, pi] radians
-        if (raw > (M_PI/2)) raw -= M_PI;
-        else if (raw < (-M_PI/2)) raw += M_PI;
+    if (raw > (M_PI / 2))
+        raw -= M_PI;
+    else if (raw < (-M_PI / 2))
+        raw += M_PI;
 
     m.carrError = raw;
-    //m.carrError = raw / (2.0f * (float)M_PI);
+    // m.carrError = raw / (2.0f * (float)M_PI);
 
     m.E2 = m.Early_I * m.Early_I + m.Early_Q * m.Early_Q;
     m.L2 = m.Late_I * m.Late_I + m.Late_Q * m.Late_Q;
@@ -444,21 +460,32 @@ TrackingMetrics ChannelProcessor::computeEpochDiscriminators(
 
 void ChannelProcessor::updateCarrierLoop(const TrackingMetrics &m)
 {
+    float carrNcoUpdate = _oldCarrNco;
 
-    if (_snr < 8.0f)
+    if (_use_fll)
     {
-        return;
-    }
+        // FLL MODE: m.fllError is in Hz.
+        // We use a simple 1st-order frequency integrator to pull the signal in.
+        // A gain of 0.1 to 0.5 allows fast frequency pull-in without chaotic overshooting.
+        float fll_gain = 0.25f;
 
-    float errorDelta = m.carrError - _oldCarrError;
-    if (fabsf(errorDelta) > 1.0f)
-    {
-        errorDelta = 0.0f;
+        carrNcoUpdate = _oldCarrNco + (fll_gain * m.fllError);
     }
-    // --- Unified Velocity-Form Loop Filter ---
-    float carrNcoUpdate = _oldCarrNco + 
-                          ((_carrLF.tau2 / _carrLF.tau1) * errorDelta) +
-                          ((m.dynamicT / _carrLF.tau1) * m.carrError);
+    else
+    {
+        // PLL MODE: m.carrError is in Radians.
+        // Standard Costas phase tracking for data decoding.
+        float errorDelta = m.carrError - _oldCarrError;
+
+        // Prevent aggressive NCO snaps on cycle slips
+        if (fabsf(errorDelta) > 1.0f)
+        {
+            errorDelta = 0.0f;
+        }
+        carrNcoUpdate = _oldCarrNco +
+                        ((_carrLF.tau2 / _carrLF.tau1) * errorDelta) +
+                        ((m.dynamicT / _carrLF.tau1) * m.carrError);
+    }
 
     _oldCarrNco = carrNcoUpdate;
     _oldCarrError = m.carrError;
@@ -474,29 +501,28 @@ void ChannelProcessor::updateCarrierLoop(const TrackingMetrics &m)
 void ChannelProcessor::updateCodeLoop(
     const TrackingMetrics &m)
 {
-/*
-// For a carrier-aided DLL, a 1st order loop (proportional only) is highly stable.
-    // The carrier aiding provides the velocity tracking. The DLL only provides phase alignment.
-    
-    // Proportional gain based on tau1/tau2 from your loop config, or just a simple gain
-    float kp = 0.5f; 
+    /*
+    // For a carrier-aided DLL, a 1st order loop (proportional only) is highly stable.
+        // The carrier aiding provides the velocity tracking. The DLL only provides phase alignment.
 
-    float codeCorrection = kp * m.codeError; 
+        // Proportional gain based on tau1/tau2 from your loop config, or just a simple gain
+        float kp = 0.5f;
 
-    _oldCodeError = m.codeError; // Kept for logging if needed
-    
-    // NCO Frequency = Base + CarrierAiding + CodePhaseCorrection
-    _codeNco.SetFrequency(_codeFreqBasis + codeCorrection + 
-                          ((float)_doppler_hz / 1540.0f));  */
+        float codeCorrection = kp * m.codeError;
 
-// Correct representation of a 2nd order loop update:
-float codeNcoUpdate = _oldCodeNco + (_codeLF.tau2 / _codeLF.tau1) * 
-                     (m.codeError - _oldCodeError) +
-                     (m.dynamicT / _codeLF.tau1) * m.codeError;                                      
+        _oldCodeError = m.codeError; // Kept for logging if needed
+
+        // NCO Frequency = Base + CarrierAiding + CodePhaseCorrection
+        _codeNco.SetFrequency(_codeFreqBasis + codeCorrection +
+                              ((float)_doppler_hz / 1540.0f));  */
+
+    // Correct representation of a 2nd order loop update:
+    float codeNcoUpdate = _oldCodeNco + (_codeLF.tau2 / _codeLF.tau1) * (m.codeError - _oldCodeError) +
+                          (m.dynamicT / _codeLF.tau1) * m.codeError;
     _oldCodeNco = codeNcoUpdate;
     _oldCodeError = m.codeError;
     _codeNco.SetFrequency(_codeFreqBasis + codeNcoUpdate +
-                          ((float)_doppler_hz / 1540.0f)); 
+                          ((float)_doppler_hz / 1540.0f));
 }
 
 void ChannelProcessor::fillResult(
@@ -536,8 +562,8 @@ CorrelatorResult ChannelProcessor::Correlator(const RawSample *samples, size_t a
     }
 
     float sample_epoch_code_phase = _codeNco.getCodePhase();
-// TODO: res.code_phase should mean sample-epoch code phase at start of 1 ms buffer.
-// Do not overload this with DLL discriminator or rollover residual.
+    // TODO: res.code_phase should mean sample-epoch code phase at start of 1 ms buffer.
+    // Do not overload this with DLL discriminator or rollover residual.
     // 1. Reduce signal to BaseBand
     runAccumulation(samples, availableSamples, res);
     // 2. Find Tracking Errors Moved to runAccmulation

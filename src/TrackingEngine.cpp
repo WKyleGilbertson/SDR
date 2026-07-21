@@ -52,10 +52,10 @@ bool TrackingEngine::beginTracking(
           track_input);
 
   activeChannels.remove_if(
-    [&](const ChannelState &ch)
-    {
+      [&](const ChannelState &ch)
+      {
         return ch.prn == refined.prn;
-    });
+      });
 
   G2INIT sv(refined.prn, 0);
 
@@ -69,8 +69,9 @@ bool TrackingEngine::beginTracking(
 
   state.processor->setInputIsComplex(rx.input_is_complex());
 
-if (state.decoder) {
-      state.decoder->setFocus(false);
+  if (state.decoder)
+  {
+    state.decoder->setFocus(false);
   }
 
   state.total_tracked_ms = 0;
@@ -182,12 +183,12 @@ void TrackingEngine::processEpoch(
 
   if (iq_log && !iq_log_header_written)
   {
-fprintf(iq_log,
-        "epoch,prn,"
-        "Ei,Eq,Pi,Pq,Li,Lq,"
-        "symbol,snr,doppler,carrier_nco_hz,code_phase,"
-        "E_mag,P_mag,L_mag,"
-        "dll_disc,pll_disc,is_locked\n");
+    fprintf(iq_log,
+            "epoch,prn,"
+            "Ei,Eq,Pi,Pq,Li,Lq,"
+            "symbol,snr,doppler,carrier_nco_hz,code_phase,"
+            "E_mag,P_mag,L_mag,"
+            "dll_disc,pll_disc,is_locked\n");
     iq_log_header_written = true;
   }
 
@@ -216,30 +217,30 @@ fprintf(iq_log,
     double pll_disc = std::atan2((double)epoch.Pq, (double)epoch.Pi);
 
     fprintf(iq_log,
-"%llu,%d,"
-"%d,%d,%d,%d,%d,%d,"
-"%d,%.1f,%.1f,%.1f,%.3f,"
-"%.1f,%.1f,%.1f,"
-"%.9f,%.9f,%d\n",
-state.epoch_counter,
-state.prn,
-epoch.Ei,
-epoch.Eq,
-epoch.Pi,
-epoch.Pq,
-epoch.Li,
-epoch.Lq,
-sym,
-state.last_snr,
-state.last_doppler_hz,
-state.last_carrier_nco_hz,
-state.last_code_phase,
-E_mag,
-P_mag,
-L_mag,
-dll_disc,
-pll_disc,
-state.last_is_locked ? 1 : 0);
+            "%llu,%d,"
+            "%d,%d,%d,%d,%d,%d,"
+            "%d,%.1f,%.1f,%.1f,%.3f,"
+            "%.1f,%.1f,%.1f,"
+            "%.9f,%.9f,%d\n",
+            state.epoch_counter,
+            state.prn,
+            epoch.Ei,
+            epoch.Eq,
+            epoch.Pi,
+            epoch.Pq,
+            epoch.Li,
+            epoch.Lq,
+            sym,
+            state.last_snr,
+            state.last_doppler_hz,
+            state.last_carrier_nco_hz,
+            state.last_code_phase,
+            E_mag,
+            P_mag,
+            L_mag,
+            dll_disc,
+            pll_disc,
+            state.last_is_locked ? 1 : 0);
 
     iq_log_rows++;
 
@@ -307,21 +308,23 @@ bool TrackingEngine::step(
   const int feed_samples = (unsigned int)ms_samples; // Process 1 ms of data at a time
   bool did_work = false;
 
- for (auto it = activeChannels.begin(); it != activeChannels.end(); )
-{
+  for (auto it = activeChannels.begin(); it != activeChannels.end();)
+  {
     ChannelState &state = *it;
-    
+
     // 1. Explicitly evaluate focus based on the requested PRN
     bool isCurrentChannelFocused = (state.prn == (int)focusPRN);
 
     // 2. Broadcast the focus state to ALL 20 parallel decoders
-    if (state.decoder) {
-        state.decoder->setFocus(isCurrentChannelFocused);
+    if (state.decoder)
+    {
+      state.decoder->setFocus(isCurrentChannelFocused);
     }
 
-    if (!isCurrentChannelFocused) {
-        ++it;
-        continue;
+    if (!isCurrentChannelFocused)
+    {
+      ++it;
+      continue;
     }
 
     // Keep processing the rest of your focus-specific tracking logic below...
@@ -413,14 +416,14 @@ bool TrackingEngine::step(
       state.processor->setLoopEnables(true, true);
       CorrelatorResult res = state.processor->Correlator(ms_ptr, feed_samples);
 
-    double pMag = std::hypot((double)res.Pi, (double)res.Pq);      
+      double pMag = std::hypot((double)res.Pi, (double)res.Pq);
 
       bool badEpoch = ((res.snr < 6.0f) && (pMag < 8000));
 
-        if (badEpoch)
-          state.badLockEpochs++;
-        else
-          state.badLockEpochs = 0;
+      if (badEpoch)
+        state.badLockEpochs++;
+      else
+        state.badLockEpochs = 0;
 
       did_work = true;
 
@@ -433,22 +436,58 @@ bool TrackingEngine::step(
       }
 
       state.sampleCursor += feed_samples;
-
       state.total_tracked_ms++;
+      // ==========================================================
+      // DYNAMIC LOOP STATE MACHINE: FLL Pull-in -> PLL -> Fallback
+      // ==========================================================
+      if (state.total_tracked_ms == 1)
+      {
+        state.processor->setLoopMode(LoopMode::Acquisition);
+        state.processor->setUseFLL(true); // Aggressive frequency pull-in
+      }
+      else if (state.total_tracked_ms == 200)
+      {
+        state.processor->setLoopMode(LoopMode::PullIn);
+        state.processor->setUseFLL(true); // Narrowing FLL
+      }
+      else if (state.total_tracked_ms == 800)
+      {
+        state.processor->setLoopMode(LoopMode::Tracking);
+        state.processor->setUseFLL(false); // Transition to exact PLL for decoding
+      }
 
+      // Fallback Trigger: If SNR drops and we start accumulating bad epochs,
+      // drop back to FLL PullIn to catch the frequency drift before losing lock completely.
+      if (state.total_tracked_ms > 800 && state.badLockEpochs >= 5 && state.badLockEpochs < 50)
+      {
+        printf("\n[FALLBACK] PRN %d phase jitter detected. Falling back to FLL.\n", state.prn);
+        state.processor->setLoopMode(LoopMode::PullIn);
+        state.processor->setUseFLL(true);
+        state.total_tracked_ms = 200; // Reset tracking timeline to ride out the FLL stage again
+      }
+      else if (state.total_tracked_ms > 1000 && state.badLockEpochs >= 50)
+      {
+        printf("\n[LOCK LOST] PRN %d queued for focused reacquire\n", state.prn);
+        queueReacquire((uint32_t)state.prn);
+        it = activeChannels.erase(it);
+        acq_needed = true;
+        return did_work;
+      }
+      // ==========================================================
+      /*
    // Gear-shift loop filter bandwidths as tracking settles
-      if (state.total_tracked_ms == 1) 
+      if (state.total_tracked_ms == 1)
       {
           state.processor->setLoopMode(LoopMode::Acquisition); // Wide: Carr 40 Hz, Code 20 Hz
       }
-      else if (state.total_tracked_ms == 50) 
+      else if (state.total_tracked_ms == 50)
       {
           state.processor->setLoopMode(LoopMode::PullIn);      // Mid:  Carr 25 Hz, Code 10 Hz
       }
-      else if (state.total_tracked_ms == 150) 
+      else if (state.total_tracked_ms == 150)
       {
           state.processor->setLoopMode(LoopMode::Tracking);    // Deep: Carr 15 Hz, Code 3 Hz
-      } 
+      }
 
 if (state.total_tracked_ms > 1000 && state.badLockEpochs >= 50)
 {
@@ -461,48 +500,51 @@ it = activeChannels.erase(it);
 acq_needed = true;   // means “service reacquire queue”, not necessarily global survey
 return did_work;
 }
-
+*/
       state.last_snr = res.snr;
       state.last_doppler_hz = res.doppler_hz;
       state.last_code_phase = res.code_phase;
 
       state.last_carrier_nco_hz = res.carrier_nco_hz;
       state.last_is_locked = res.is_locked;
-// ==========================================================================
+      // ==========================================================================
       // INJECT HIGH-RES SLIDING PREAMBLE SEARCH ENGINE (WITH ACCELERATED FEED)
       // ==========================================================================
-      // Make a mutable copy of the result to ensure lock conditions and 
+      // Make a mutable copy of the result to ensure lock conditions and
       // symbol segments are perfectly formed for the sliding matching logic.
       CorrelatorResult master_res = res;
-      
-      // Force the lock state to true so the sliding register accumulates 
+
+      // Force the lock state to true so the sliding register accumulates
       // history even while the tracking loop filters are pulling in.
-      master_res.is_locked = true; 
+      master_res.is_locked = true;
 
       // Ensure the master result has at least the current 1ms epoch symbols populated
       if (master_res.epochs.empty() && state.total_tracked_ms > 0)
       {
-         // Fallback boundary safety: pull directly from the master prompt inversion
-         EpochResult dummy_epoch;
-         dummy_epoch.symbol = (res.Pi >= 0) ? 1 : -1;
-         dummy_epoch.Pi = res.Pi;
-         dummy_epoch.Pq = res.Pq;
-         master_res.epochs.push_back(dummy_epoch);
+        // Fallback boundary safety: pull directly from the master prompt inversion
+        EpochResult dummy_epoch;
+        dummy_epoch.symbol = (res.Pi >= 0) ? 1 : -1;
+        dummy_epoch.Pi = res.Pi;
+        dummy_epoch.Pq = res.Pq;
+        master_res.epochs.push_back(dummy_epoch);
       }
 
       // Route the fortified continuous metrics through our master stream decoder
-     // Route the fortified continuous metrics through our master stream decoder
-      if (state.decoder) {
-           if (isCurrentChannelFocused) {
-              if (master_res.epochs.empty()) {
-                  printf("[WARNING-TE] master_res.epochs is empty! NavDecoder will starve.\n");
-              } 
-              //else {
-              //    printf("[DEBUG-TE] Handing off %zu epochs to NavDecoder for PRN %d\n", 
-              //           master_res.epochs.size(), state.prn);
-              //}
+      // Route the fortified continuous metrics through our master stream decoder
+      if (state.decoder)
+      {
+        if (isCurrentChannelFocused)
+        {
+          if (master_res.epochs.empty())
+          {
+            printf("[WARNING-TE] master_res.epochs is empty! NavDecoder will starve.\n");
           }
-          state.decoder->processTrackingMetrics(master_res); 
+          // else {
+          //     printf("[DEBUG-TE] Handing off %zu epochs to NavDecoder for PRN %d\n",
+          //            master_res.epochs.size(), state.prn);
+          // }
+        }
+        state.decoder->processTrackingMetrics(master_res);
       }
 
       for (const auto &epoch : res.epochs)
@@ -518,9 +560,9 @@ return did_work;
         int pi_k = res.Pi / 1000;
         int pq_k = res.Pq / 1000;
         printf("\r[TE]PRN %3d | SNR %5.1f | dF %7.1f | Code %8.3f | I %3dk | Q %3dk ",
-              //"N%02d R%4.2f",
+               //"N%02d R%4.2f",
                res.prn, res.snr, res.doppler_hz, res.code_phase, pi_k, pq_k);
-            //  state.nav_phase_best, state.nav_phase_ratio);
+        //  state.nav_phase_best, state.nav_phase_ratio);
 
         fflush(stdout);
 
@@ -535,7 +577,7 @@ return did_work;
 #endif
       }
     } // End while
-  ++it;
+    ++it;
   } // end for
   return did_work;
 } // end step()
