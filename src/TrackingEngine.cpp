@@ -437,6 +437,7 @@ bool TrackingEngine::step(
 
       state.sampleCursor += feed_samples;
       state.total_tracked_ms++;
+
       // ==========================================================
       // DYNAMIC LOOP STATE MACHINE: FLL Pull-in -> PLL -> Fallback
       // ==========================================================
@@ -456,16 +457,9 @@ bool TrackingEngine::step(
         state.processor->setUseFLL(false); // Transition to exact PLL for decoding
       }
 
-      // Fallback Trigger: If SNR drops and we start accumulating bad epochs,
-      // drop back to FLL PullIn to catch the frequency drift before losing lock completely.
-      if (state.total_tracked_ms > 800 && state.badLockEpochs >= 5 && state.badLockEpochs < 50)
-      {
-        printf("\n[FALLBACK] PRN %d phase jitter detected. Falling back to FLL.\n", state.prn);
-        state.processor->setLoopMode(LoopMode::PullIn);
-        state.processor->setUseFLL(true);
-        state.total_tracked_ms = 200; // Reset tracking timeline to ride out the FLL stage again
-      }
-      else if (state.total_tracked_ms > 1000 && state.badLockEpochs >= 50)
+      // 1. ABSOLUTE DEATH CHECK FIRST
+      // If we spend 50ms in the noise floor, the code phase is gone. Kill it.
+      if (state.badLockEpochs >= 50)
       {
         printf("\n[LOCK LOST] PRN %d queued for focused reacquire\n", state.prn);
         queueReacquire((uint32_t)state.prn);
@@ -473,34 +467,17 @@ bool TrackingEngine::step(
         acq_needed = true;
         return did_work;
       }
+      // 2. FALLBACK CHECK
+      // If we just have minor jitter, try dropping back to FLL.
+      else if (state.total_tracked_ms > 800 && state.badLockEpochs >= 5)
+      {
+        printf("\n[FALLBACK] PRN %d phase jitter detected. Falling back to FLL.\n", state.prn);
+        state.processor->setLoopMode(LoopMode::PullIn);
+        state.processor->setUseFLL(true);
+        state.total_tracked_ms = 200; // Reset tracking timeline to ride out the FLL stage again
+      }
       // ==========================================================
-      /*
-   // Gear-shift loop filter bandwidths as tracking settles
-      if (state.total_tracked_ms == 1)
-      {
-          state.processor->setLoopMode(LoopMode::Acquisition); // Wide: Carr 40 Hz, Code 20 Hz
-      }
-      else if (state.total_tracked_ms == 50)
-      {
-          state.processor->setLoopMode(LoopMode::PullIn);      // Mid:  Carr 25 Hz, Code 10 Hz
-      }
-      else if (state.total_tracked_ms == 150)
-      {
-          state.processor->setLoopMode(LoopMode::Tracking);    // Deep: Carr 15 Hz, Code 3 Hz
-      }
 
-if (state.total_tracked_ms > 1000 && state.badLockEpochs >= 50)
-{
-printf("\n[LOCK LOST] PRN %d queued for focused reacquire\n", state.prn);
-
-queueReacquire((uint32_t)state.prn);
-
-it = activeChannels.erase(it);
-
-acq_needed = true;   // means “service reacquire queue”, not necessarily global survey
-return did_work;
-}
-*/
       state.last_snr = res.snr;
       state.last_doppler_hz = res.doppler_hz;
       state.last_code_phase = res.code_phase;
@@ -527,6 +504,7 @@ return did_work;
         dummy_epoch.Pi = res.Pi;
         dummy_epoch.Pq = res.Pq;
         master_res.epochs.push_back(dummy_epoch);
+        master_res.numSymbols = 1;
       }
 
       // Route the fortified continuous metrics through our master stream decoder

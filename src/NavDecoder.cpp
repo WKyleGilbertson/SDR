@@ -12,7 +12,6 @@ NavDecoder::NavDecoder(int prn, double fs) : _prn(prn), _fs_rate(fs), _subframeB
     _subframeBitIdx = 0;
     _wordCounter = 0;
     _isInverted = false;
-    _msCounter = 0;
     _bitOffset = 0;
     _bitSyncLocked = false;
     _bitIntegrationI = 0.0;
@@ -57,15 +56,13 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
         }
         else
         {
-            // --- NEW: FLL Noise Gating ---
-            // Wait for the FLL pull-in stage (first ~1000ms) to finish settling 
-            // the carrier phase before trusting symbol transitions.
+            // --- FLL NOISE GATE ---
+            // Completely ignore symbol transitions while the FLL is pulling in
             if (_decoderSampleCounter < 1000)
             {
                 _last_symbol = epoch.symbol;
                 continue; 
             }
-            // -----------------------------
 
             // Bit Sync Search: Histogramming
             if (_last_symbol != 0 && epoch.symbol != _last_symbol)
@@ -74,7 +71,7 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
             }
             _last_symbol = epoch.symbol;
 
-            // Lock acquisition check (requires 5000 clean ms of data)
+            // Lock acquisition check (requires 5000 clean ms of PLL data)
             if (_msCounter++ > 5000)
             {
                 int maxVal = 0;
