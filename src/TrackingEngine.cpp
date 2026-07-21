@@ -504,10 +504,6 @@ return did_work;
           }
           state.decoder->processTrackingMetrics(master_res); 
       }
-        /*
-      if (state.decoder) {
-          state.decoder->processTrackingMetrics(master_res); 
-      } */
 
       for (const auto &epoch : res.epochs)
       {

@@ -2,6 +2,7 @@
 #include <vector>
 #include <cstdint>
 #include "ChannelProcessor.h" // Access to CorrelatorResult definition
+//#define DEBUG_NAV
 
 struct Observation
 {
@@ -66,9 +67,6 @@ private:
     int _lastBitOfPrevWord = 0;
     bool _costasInverted = false;
 
-    // FIX: Restored missing compilation fields here
-    int _consecutivePasses = 0;
-
     int _d29Star = 0;
     int _d30Star = 0;
     uint32_t _tow = 0;
@@ -77,11 +75,9 @@ private:
     Observation _lastObservation = {0, 0, 0, 0, false};
     bool handleWord(int wordNum);
     bool isParityValid(uint32_t word, int lastD29, int lastD30);
-    uint32_t getBits(int startBit, int len);
     int _preambleCandidateCount = 0;
     int _parityPassCount = 0;
     int _parityFailCount = 0;
     uint32_t _wordCounter = 0; // Track GPS subframe word indices (1 to 10.)
     int _totalBitsCounter = 0;
-    int _lastPreambleBitLocation = -3000; // Initialize well out of range
 };

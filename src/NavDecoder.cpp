@@ -16,7 +16,6 @@ NavDecoder::NavDecoder(int prn, double fs) : _prn(prn), _fs_rate(fs), _subframeB
     _bitSyncLocked = false;
     _bitIntegrationI = 0.0;
     _msInBitCounter = 0;
-    _consecutivePasses = 0;
     _decoderSampleCounter = 0;
     _d29Star = 0;
     _d30Star = 0;
@@ -95,7 +94,7 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
                     }
                 }
                 _bitSyncLocked = true;
-                printf("[NAV] Sync Locked at offset %d\n", _bitOffset);
+                printf("\n[NAV] Sync Locked at offset %d\n", _bitOffset);
             }
         }
     }
@@ -159,7 +158,6 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
                 _preambleCandidateCount++;
                 _frameSync = true;
                 _subframeBitIdx = 8;
-                _consecutivePasses = 0;
 
                 // Set global stream inversion based on preamble type
                 _isInverted = (fwdNormal == 0x74);
@@ -195,13 +193,15 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
 
 bool NavDecoder::handleWord(int wordNum)
 {
+    #ifdef DEBUG_NAV
     if (_isFocused) {
-        printf("[NAV] Word %d Candidate Raw Bits: ", wordNum);
+        printf("\n[NAV] Word %d Candidate Raw Bits: ", wordNum);
         for (int i = 29; i >= 0; i--) {
             printf("%d", (_shiftReg >> i) & 1);
         }
         printf("\n");
-    }
+    } 
+    #endif
 
     // 1. Try checking parity with current state
     bool valid = isParityValid(_shiftReg, _d29Star, _d30Star);
@@ -222,7 +222,7 @@ bool NavDecoder::handleWord(int wordNum)
             valid = true;
             
             if (_isFocused) {
-                printf("[NAV] Polarity flip detected! Permanently flipping stream polarity.\n");
+                printf("\n[NAV] Polarity flip detected! Permanently flipping stream polarity.\n");
             }
         }
     }
@@ -230,19 +230,18 @@ bool NavDecoder::handleWord(int wordNum)
     if (!valid)
     {
         _parityFailCount++;
-        _consecutivePasses = 0;
         
         if (_parityFailCount > 3) 
         {
             _frameSync = false;
             if (_isFocused) {
-                printf("[NAV] Too many consecutive parity failures (%d). Dropping frame sync.\n", _parityFailCount);
+                printf("\n[NAV] Too many consecutive parity failures (%d). Dropping frame sync.\n", _parityFailCount);
             }
         }
         else 
         {
             if (_isFocused) {
-                printf("[NAV] Parity failed for word %d (Failure count: %d), but maintaining frame sync...\n", wordNum, _parityFailCount);
+                printf("\n[NAV] Parity failed for word %d (Failure count: %d), but maintaining frame sync...\n", wordNum, _parityFailCount);
             }
         }
         return false;
@@ -250,10 +249,9 @@ bool NavDecoder::handleWord(int wordNum)
 
     _parityFailCount = 0;
     _parityPassCount++;
-    _consecutivePasses++;
 
     if (_isFocused) {
-        printf("[NAV] Parity PASSED for Word %d!\n", wordNum);
+        printf("\n[NAV] Parity PASSED for Word %d!\n", wordNum);
     }
 
     // Payload is already normalized via global _isInverted correction
@@ -300,12 +298,6 @@ bool NavDecoder::isParityValid(uint32_t word, int lastD29, int lastD30)
     return (p1 == d[25] && p2 == d[26] && p3 == d[27] && p4 == d[28] && p5 == d[29] && p6 == d[30]);
 }
 
-uint32_t NavDecoder::getBits(int startBit, int len)
-{
-    uint32_t mask = (1U << len) - 1;
-    return (_shiftReg >> (30 - (startBit + len - 1))) & mask;
-}
-
 void NavDecoder::processFramedBit(uint32_t bit)
 {
     fprintf(stdout, "\n[NAV] PRN %3d | Received Bit: %2d | Word Counter: %d | Subframe Bit Index: %d\n",
@@ -321,10 +313,11 @@ void NavDecoder::processFramedBit(uint32_t bit)
         for (int i = 0; i < 30; i++)
             currentWord |= (_subframeBuffer[i] << (29 - i));
         // Debugging the raw bit stream
+        /*
         printf("[DEBUG] Raw Bits: ");
         for (int i = 0; i < 30; i++)
             printf("%d", _subframeBuffer[i]);
-        printf("\n");
+        printf("\n"); */
         bool valid = isParityValid(currentWord, _d29Star, _d30Star);
         printf("[PARITY] Word %d: %08X | Valid: %s\n", _wordCounter, currentWord, valid ? "YES" : "NO");
 
@@ -335,7 +328,7 @@ void NavDecoder::processFramedBit(uint32_t bit)
             {
                 _isInverted = !_isInverted; // Flip polarity
                 _parityFailCount = 0;       // Reset
-                printf("[NAV] *** Parity failed threshold, flipping polarity to: %s ***\n",
+                printf("\n[NAV] *** Parity failed threshold, flipping polarity to: %s ***\n",
                        _isInverted ? "INVERTED" : "NORMAL");
             }
         }

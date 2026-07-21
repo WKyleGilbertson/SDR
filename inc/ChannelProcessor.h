@@ -210,7 +210,6 @@ private:
     bool _input_is_complex = true;
     bool _enable_pll = true;
     bool _enable_dll = true;
-    bool _fixed_nco_debug = false;
     FILE * _sampleDump = nullptr;
     int _sampleDumpRemaining = 0;
     bool _verboseInit = true;
