@@ -150,13 +150,13 @@ void ChannelProcessor::setLoopMode(LoopMode mode)
         break;
 
     case LoopMode::PullIn:
-        calculateLoopCoefficients(_carrLF, 25.0f, 0.707f, 1.0f);
+        calculateLoopCoefficients(_carrLF, 30.0f, 0.707f, 1.0f);
         calculateLoopCoefficients(_codeLF, 10.0f, 0.707f, 1.0f);
         fprintf(stdout, "\n[LOOPS] Pull-In\n");
         break;
 
     case LoopMode::Tracking:
-        calculateLoopCoefficients(_carrLF, 12.0f, 0.707f, 1.0f);
+        calculateLoopCoefficients(_carrLF, 20.0f, 0.707f, 1.0f);
         calculateLoopCoefficients(_codeLF, 5.0f, 0.707f, 1.0f);
         fprintf(stdout, "\n[LOOPS] Tracking");
         break;
@@ -279,45 +279,31 @@ void ChannelProcessor::runAccumulation(
         uint32_t carrIdx = _carrNco.getPhase() >> (32 - 8);
 
         // 1. Convert NCO sine/cosine to 8-bit integer for MAC
-//        float s = _carrNco.sine(carrIdx) * 8.0f;
-//        float c = _carrNco.cosine(carrIdx) * 8.0f;
-         //int8_t s = (int8_t)(_carrNco.sine(carrIdx) * 127.0f);
-         //int8_t c = (int8_t)(_carrNco.cosine(carrIdx) * 127.0f);
-         int8_t s = (int8_t)(_carrNco.sine(carrIdx) * 127.0f);
-         int8_t c = (int8_t)(_carrNco.cosine(carrIdx) * 127.0f);
+        int8_t s = (int8_t)(_carrNco.sine(carrIdx) * 127.0f);
+        int8_t c = (int8_t)(_carrNco.cosine(carrIdx) * 127.0f);
         int16_t in_i = samples[i].i;
         int16_t in_q = samples[i].q;
-        //float bb_i = 0.0f;
-        //float bb_q = 0.0f;
-         int16_t bb_i = 0;
-         int16_t bb_q = 0;
+        int16_t bb_i = 0;
+        int16_t bb_q = 0;
 
         if (_input_is_complex)
         {
             // (I + jQ) * (cos - j sin) -> integer MAC (Multiply-Accumulate)
-            //bb_i = (float)(in_i * c + in_q * s);
-            //bb_q = (float)(in_q * c - in_i * s);
              bb_i = (int16_t)(in_i * c + in_q * s);
              bb_q = (int16_t)(in_q * c - in_i * s);
         }
         else
         {
             // Real IF: sample * local oscillator
-            //bb_i = (float)(in_i * c);
-            //bb_q = (float)(in_i * s);
              bb_i = (int16_t)(in_i * c);
              //bb_q = (int16_t)(-in_i * s);
              bb_q = (int16_t)(in_i * s);
         }
-      //  int32_t prompt_i_term = (int32_t)(bb_i * _codeNco.Prompt);
-      //  int32_t prompt_q_term = (int32_t)(bb_q * _codeNco.Prompt);
 
         _epochAcc.Ei += (int32_t)((int32_t)bb_i * _codeNco.Early);
         _epochAcc.Eq += (int32_t)((int32_t)bb_q * _codeNco.Early);
         _epochAcc.Pi += (int32_t)((int32_t)bb_i * _codeNco.Prompt);
         _epochAcc.Pq += (int32_t)((int32_t)bb_q * _codeNco.Prompt);
-        //_epochAcc.Pi += prompt_i_term;
-        //_epochAcc.Pq += prompt_q_term;
         _epochAcc.Li += (int32_t)((int32_t)bb_i * _codeNco.Late);
         _epochAcc.Lq += (int32_t)((int32_t)bb_q * _codeNco.Late);
 
@@ -342,7 +328,6 @@ void ChannelProcessor::runAccumulation(
         if (_codeNco.getRotations() < prev_rotations)
         {
 
-            CorrelatorResult raw_res;
             _epochAcc.Ei >>= 4;
             _epochAcc.Eq >>= 4;
             _epochAcc.Pi >>= 4;
@@ -369,9 +354,6 @@ void ChannelProcessor::runAccumulation(
 
             harvestEpochResult(res, samples[i], i);
             fillResult(res, m, _codeNco.getCodePhase());
-            // Clear accumulators for the next epoch
-            _epochAcc = {};
-            _epochSampleCount = 0;
         }
     }
 }

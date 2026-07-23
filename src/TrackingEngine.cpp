@@ -475,6 +475,7 @@ bool TrackingEngine::step(
         state.processor->setLoopMode(LoopMode::PullIn);
         state.processor->setUseFLL(true);
         state.total_tracked_ms = 200; // Reset tracking timeline to ride out the FLL stage again
+        state.badLockEpochs = 0; // Reset the bad lock counter to avoid immediate reacquire
       }
       // ==========================================================
 

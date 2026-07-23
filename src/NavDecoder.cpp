@@ -22,7 +22,7 @@ NavDecoder::NavDecoder(int prn, double fs) : _prn(prn), _fs_rate(fs), _subframeB
     _shiftReg = 0;
     _shiftReg64 = 0;
     _frameSync = false;
-    _navTimerMs = 0; // Initialize the NAV timer
+    _navTimerMs = 0;    // Initialize the NAV timer
     _sessionEpochs = 0; // Initialize the session epoch counter
 
     for (int i = 0; i < 20; i++)
@@ -37,14 +37,14 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
     // --- 1. ROBUST LOSS OF LOCK HANDLING ---
     if (!metrics.is_locked)
     {
-        if (_bitSyncLocked || _sessionEpochs > 500) 
+        if (_bitSyncLocked || _sessionEpochs > 500)
         {
             _bitSyncLocked = false;
-            _sessionEpochs = 0;       // Reset session counter on lock loss
+            _sessionEpochs = 0;
             _bitOffset = 0;
             _bitIntegrationI = 0.0;
             _last_symbol = 0;
-            
+
             for (int i = 0; i < 20; i++)
             {
                 _sync.histograms[i] = 0;
@@ -57,10 +57,16 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
     if (metrics.numSymbols <= 0)
         return;
 
+    // --- INCREMENT ONCE PER 1MS TRACKING CALLBACK ---
+    if (!_bitSyncLocked)
+    {
+        _sessionEpochs++;
+    }
+
     for (const auto &epoch : metrics.epochs)
     {
         uint32_t current_phase = (uint32_t)(_decoderSampleCounter % 20);
-        _decoderSampleCounter++; 
+        _decoderSampleCounter++;
 
         if (_bitSyncLocked)
         {
@@ -77,17 +83,14 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
         }
         else
         {
-            // --- CLASS-MEMBER SESSION EPOCH COUNTER ---
-            _sessionEpochs++;
-
-            // Phase 1: FLL Noise Gate (First 1000 epochs / 1 second)
+            // Phase 1: FLL Noise Gate (First 1000 ms)
             if (_sessionEpochs < 1000)
             {
                 _last_symbol = epoch.symbol;
-                continue; 
+                continue;
             }
 
-            // Phase 2: Strict 5-Second Histogram Window (1000 to 6000 epochs)
+            // Phase 2: Strict 5-Second Histogram Window (1000ms to 6000ms)
             if (_sessionEpochs < 6000)
             {
                 if (_last_symbol != 0 && epoch.symbol != _last_symbol)
@@ -96,7 +99,7 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
                 }
                 _last_symbol = epoch.symbol;
             }
-            // Phase 3: Lock Trigger (Fires precisely at epoch 6000)
+            // Phase 3: Lock Trigger (Fires precisely at 6000 ms)
             else if (!_bitSyncLocked && _sessionEpochs >= 6000)
             {
                 int maxVal = 0;
@@ -109,7 +112,7 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
                     }
                 }
                 _bitSyncLocked = true;
-                printf("\n[NAV] Sync Locked at offset %d (Guaranteed max votes: %d)\n", _bitOffset, maxVal);
+                printf("\n[NAV] Sync Locked at offset %d (True robust max votes: %d)\n", _bitOffset, maxVal);
             }
         }
     }
@@ -253,9 +256,14 @@ bool NavDecoder::handleWord(int wordNum)
         if (_parityFailCount > 3)
         {
             _frameSync = false;
+
+            // *** THE FIX: RESET THE STRIKE COUNTER ***
+            // Give the next preamble a clean slate!
+            _parityFailCount = 0;
+
             if (_isFocused)
             {
-                printf("\n[NAV] Too many consecutive parity failures (%d). Dropping frame sync.\n", _parityFailCount);
+                printf("\n[NAV] Too many consecutive parity failures. Dropping frame sync and resetting counter.\n");
             }
         }
         else
