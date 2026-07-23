@@ -80,4 +80,6 @@ private:
     int _parityFailCount = 0;
     uint32_t _wordCounter = 0; // Track GPS subframe word indices (1 to 10.)
     int _totalBitsCounter = 0;
+    int _navTimerMs = 0; // Millisecond counter for NAV processing
+    int _sessionEpochs = 0; // Count of epochs processed in the current session
 };

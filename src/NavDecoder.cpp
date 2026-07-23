@@ -22,6 +22,8 @@ NavDecoder::NavDecoder(int prn, double fs) : _prn(prn), _fs_rate(fs), _subframeB
     _shiftReg = 0;
     _shiftReg64 = 0;
     _frameSync = false;
+    _navTimerMs = 0; // Initialize the NAV timer
+    _sessionEpochs = 0; // Initialize the session epoch counter
 
     for (int i = 0; i < 20; i++)
     {
@@ -32,19 +34,38 @@ NavDecoder::NavDecoder(int prn, double fs) : _prn(prn), _fs_rate(fs), _subframeB
 
 void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
 {
-    if (!metrics.is_locked || metrics.numSymbols <= 0)
+    // --- 1. ROBUST LOSS OF LOCK HANDLING ---
+    if (!metrics.is_locked)
+    {
+        if (_bitSyncLocked || _sessionEpochs > 500) 
+        {
+            _bitSyncLocked = false;
+            _sessionEpochs = 0;       // Reset session counter on lock loss
+            _bitOffset = 0;
+            _bitIntegrationI = 0.0;
+            _last_symbol = 0;
+            
+            for (int i = 0; i < 20; i++)
+            {
+                _sync.histograms[i] = 0;
+                _sync.buffer[i] = 0;
+            }
+        }
+        return;
+    }
+
+    if (metrics.numSymbols <= 0)
         return;
 
     for (const auto &epoch : metrics.epochs)
     {
         uint32_t current_phase = (uint32_t)(_decoderSampleCounter % 20);
-        _decoderSampleCounter++;
+        _decoderSampleCounter++; 
 
         if (_bitSyncLocked)
         {
             if (current_phase == _bitOffset)
             {
-                // We are at the start of a new 20ms bit block
                 int8_t integratedBit = (_bitIntegrationI >= 0.0) ? 1 : -1;
                 processBit(integratedBit);
                 _bitIntegrationI = (double)epoch.symbol;
@@ -56,17 +77,18 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
         }
         else
         {
-            // --- TIME-BASED PHASES USING ABSOLUTE EPOCH COUNT ---
+            // --- CLASS-MEMBER SESSION EPOCH COUNTER ---
+            _sessionEpochs++;
+
             // Phase 1: FLL Noise Gate (First 1000 epochs / 1 second)
-            if (_decoderSampleCounter < 1000)
+            if (_sessionEpochs < 1000)
             {
                 _last_symbol = epoch.symbol;
-                continue;
+                continue; 
             }
 
-            // Phase 2: Histogram Collection Window
-            // Collect symbol transitions cleanly from epoch 1000 up to 6000 (5 full seconds)
-            if (_decoderSampleCounter < 6000)
+            // Phase 2: Strict 5-Second Histogram Window (1000 to 6000 epochs)
+            if (_sessionEpochs < 6000)
             {
                 if (_last_symbol != 0 && epoch.symbol != _last_symbol)
                 {
@@ -74,8 +96,8 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
                 }
                 _last_symbol = epoch.symbol;
             }
-            // Phase 3: Evaluate and Lock (Triggered exactly once at epoch 6000)
-            else if (!_bitSyncLocked && _decoderSampleCounter == 6000)
+            // Phase 3: Lock Trigger (Fires precisely at epoch 6000)
+            else if (!_bitSyncLocked && _sessionEpochs >= 6000)
             {
                 int maxVal = 0;
                 for (int i = 0; i < 20; i++)
@@ -87,7 +109,7 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
                     }
                 }
                 _bitSyncLocked = true;
-                printf("\n[NAV] Sync Locked at offset %d (Robust max votes: %d)\n", _bitOffset, maxVal);
+                printf("\n[NAV] Sync Locked at offset %d (Guaranteed max votes: %d)\n", _bitOffset, maxVal);
             }
         }
     }
