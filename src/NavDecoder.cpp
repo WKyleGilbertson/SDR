@@ -3,8 +3,10 @@
 #include <cstdio>
 #include <cstdlib>
 
-int32_t NavDecoder::extendSign(uint32_t val, int bits) {
-    if (val & (1 << (bits - 1))) {
+int32_t NavDecoder::extendSign(uint32_t val, int bits)
+{
+    if (val & (1 << (bits - 1)))
+    {
         return val | (~0U << bits);
     }
     return val;
@@ -293,10 +295,10 @@ bool NavDecoder::handleWord(int wordNum)
 
     // Payload is already normalized via global _isInverted correction
     uint32_t payloadWord = _shiftReg & 0x3FFFFFFF;
-    
+
     // Extract the top 24 data bits (strip off the bottom 6 parity bits)
     uint32_t dataBits = (payloadWord >> 6) & 0xFFFFFF;
-    
+
     // Buffer it (wordNum is 1-10, so index is 0-9)
     _subframeWords[wordNum - 1] = dataBits;
 
@@ -387,25 +389,25 @@ void NavDecoder::processFramedBit(uint32_t bit)
 void NavDecoder::decodeSubframe(int subframeID)
 {
     // IS-GPS-200 mandates Pi exactly as this:
-    const double GPS_PI = 3.1415926535898; 
+    const double GPS_PI = 3.1415926535898;
 
     if (subframeID == 1)
     {
         _tempEphemeris.prn = _prn;
-        
+
         // Word 3: Week Number (10 bits)
         _tempEphemeris.weekNumber = (_subframeWords[2] >> 14) & 0x3FF;
-        
+
         // Word 8: toc (16 bits)
         _tempEphemeris.toc = (_subframeWords[7] >> 8) & 0xFFFF;
-        _tempEphemeris.toc *= 16.0; 
-        
+        _tempEphemeris.toc *= 16.0;
+
         // Word 8: af2 (8 bits, signed)
         _tempEphemeris.af2 = extendSign(_subframeWords[7] & 0xFF, 8) * pow(2, -55);
-        
+
         // Word 9: af1 (16 bits, signed)
         _tempEphemeris.af1 = extendSign(_subframeWords[8] >> 8, 16) * pow(2, -43);
-        
+
         // Word 10: af0 (22 bits, signed)
         _tempEphemeris.af0 = extendSign(_subframeWords[9] >> 2, 22) * pow(2, -31);
     }
@@ -413,28 +415,28 @@ void NavDecoder::decodeSubframe(int subframeID)
     {
         // Word 3: Crs (16 bits, signed)
         _tempEphemeris.crs = extendSign(_subframeWords[2] & 0xFFFF, 16) * pow(2, -5);
-        
+
         // Word 4: Delta n (16 bits, signed)
         _tempEphemeris.dn = extendSign(_subframeWords[3] >> 8, 16) * pow(2, -43) * GPS_PI;
-        
+
         // Words 4 & 5: M0 (32 bits, signed)
         uint32_t m0_raw = ((_subframeWords[3] & 0xFF) << 24) | _subframeWords[4];
         _tempEphemeris.m0 = extendSign(m0_raw, 32) * pow(2, -31) * GPS_PI;
-        
+
         // Word 6: Cuc (16 bits, signed)
         _tempEphemeris.cuc = extendSign(_subframeWords[5] >> 8, 16) * pow(2, -29);
-        
+
         // Words 6 & 7: Eccentricity (32 bits, unsigned)
         uint32_t e_raw = ((_subframeWords[5] & 0xFF) << 24) | _subframeWords[6];
         _tempEphemeris.ecc = e_raw * pow(2, -33);
-        
+
         // Word 8: Cus (16 bits, signed)
         _tempEphemeris.cus = extendSign(_subframeWords[7] >> 8, 16) * pow(2, -29);
-        
+
         // Words 8 & 9: sqrt(A) (32 bits, unsigned)
         uint32_t sqrta_raw = ((_subframeWords[7] & 0xFF) << 24) | _subframeWords[8];
         _tempEphemeris.sqrta = sqrta_raw * pow(2, -19);
-        
+
         // Word 10: toe (16 bits)
         _tempEphemeris.toe = (_subframeWords[9] >> 8) & 0xFFFF;
         _tempEphemeris.toe *= 16.0;
@@ -443,38 +445,42 @@ void NavDecoder::decodeSubframe(int subframeID)
     {
         // Word 3: Cic (16 bits, signed)
         _tempEphemeris.cic = extendSign(_subframeWords[2] >> 8, 16) * pow(2, -29);
-        
+
         // Words 3 & 4: Omega0 (32 bits, signed)
         uint32_t omega0_raw = ((_subframeWords[2] & 0xFF) << 24) | _subframeWords[3];
         _tempEphemeris.omega0 = extendSign(omega0_raw, 32) * pow(2, -31) * GPS_PI;
-        
+
         // Word 5: Cis (16 bits, signed)
         _tempEphemeris.cis = extendSign(_subframeWords[4] >> 8, 16) * pow(2, -29);
-        
+
         // Words 5 & 6: i0 (32 bits, signed)
         uint32_t i0_raw = ((_subframeWords[4] & 0xFF) << 24) | _subframeWords[5];
         _tempEphemeris.i0 = extendSign(i0_raw, 32) * pow(2, -31) * GPS_PI;
-        
+
         // Word 7: Crc (16 bits, signed)
         _tempEphemeris.crc = extendSign(_subframeWords[6] >> 8, 16) * pow(2, -5);
-        
-        // Words 7 & 8: omega (Argument of Perigee) (32 bits, signed)
-        uint32_t omega_raw = ((_subframeWords[6] & 0xFF) << 24) | _subframeWords[7];
+
+        // Words 7 & 8: omega (Argument of Perigee)
+        // Add the 24-bit mask (& 0xFFFFFF) to the lower word:
+        uint32_t omega_raw = ((_subframeWords[6] & 0xFF) << 24) | (_subframeWords[7] & 0xFFFFFF);
         _tempEphemeris.omega = extendSign(omega_raw, 32) * pow(2, -31) * GPS_PI;
-        
+
         // Word 9: Omega Dot (24 bits, signed)
         _tempEphemeris.omegaDot = extendSign(_subframeWords[8], 24) * pow(2, -43) * GPS_PI;
-        
+
         // Word 10: IDOT (14 bits, signed)
         _tempEphemeris.iDot = extendSign(_subframeWords[9] >> 8, 14) * pow(2, -43) * GPS_PI;
 
         // --- SUBFRAME 3 COMPLETE ---
         _tempEphemeris.isValid = true;
-        
+
         // Push to the Global Database!
         ConstellationManager::getInstance().commitEphemeris(_prn, _tempEphemeris);
-        
-        if (_isFocused) {
+
+        ConstellationManager::getInstance().printEphemerisSanityCheck(_prn);
+
+        if (_isFocused)
+        {
             printf("\n[NAV] PRN %2d | Ephemeris fully decoded & committed to ConstellationManager!\n", _prn);
         }
     }
