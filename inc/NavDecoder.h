@@ -1,7 +1,10 @@
 #pragma once
 #include <vector>
 #include <cstdint>
-#include "ChannelProcessor.h" // Access to CorrelatorResult definition
+#include <cmath>
+#include "ChannelProcessor.h" // Access oto CorrelatorResult definition
+#include "ConstellationManager.hpp" // Access to ConstellationManager singleton
+#include "Ephemeris.hpp"    // Access to Ephemeris structure
 //#define DEBUG_NAV
 
 struct Observation
@@ -82,4 +85,9 @@ private:
     int _totalBitsCounter = 0;
     int _navTimerMs = 0; // Millisecond counter for NAV processing
     int _sessionEpochs = 0; // Count of epochs processed in the current session
+
+    Ephemeris _tempEphemeris; // Temporary storage for ephemeris data being decoded
+    uint32_t _subframeWords[10] = {0}; // Buffer to hold 10 words of a subframe
+    void decodeSubframe(int subframeID);
+    int32_t extendSign(uint32_t val, int bits);
 };
