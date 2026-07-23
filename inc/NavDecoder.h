@@ -89,5 +89,8 @@ private:
     Ephemeris _tempEphemeris; // Temporary storage for ephemeris data being decoded
     uint32_t _subframeWords[10] = {0}; // Buffer to hold 10 words of a subframe
     void decodeSubframe(int subframeID);
+    bool _hasSF1 = false;
+    bool _hasSF2 = false;
+    bool _hasSF3 = false;
     int32_t extendSign(uint32_t val, int bits);
 };

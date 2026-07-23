@@ -267,6 +267,9 @@ bool NavDecoder::handleWord(int wordNum)
             _frameSync = false;
             _parityFailCount = 0;
             _tempEphemeris = {};
+            _hasSF1 = false;
+            _hasSF2 = false;
+            _hasSF3 = false;
 
             if (_isFocused)
             {
@@ -389,24 +392,25 @@ void NavDecoder::decodeSubframe(int subframeID)
     // IS-GPS-200 mandates Pi exactly as this:
     const double GPS_PI = 3.1415926535898;
 
-if (subframeID == 1)
+    if (subframeID == 1)
     {
         _tempEphemeris.prn = _prn;
-        
+
         // Word 3: Week Number (10 bits)
         _tempEphemeris.weekNumber = (_subframeWords[2] >> 14) & 0x3FF;
-        
+
         // Word 8: t_oc (bottom 16 bits)
-        _tempEphemeris.toc = (_subframeWords[7] & 0xFFFF) * 16; 
-        
+        _tempEphemeris.toc = (_subframeWords[7] & 0xFFFF) * 16;
+
         // Word 9: af2 (top 8 bits, signed)
         _tempEphemeris.af2 = extendSign((_subframeWords[8] >> 16) & 0xFF, 8) * pow(2, -55);
-        
+
         // Word 9: af1 (bottom 16 bits, signed)
         _tempEphemeris.af1 = extendSign(_subframeWords[8] & 0xFFFF, 16) * pow(2, -43);
-        
+
         // Word 10: af0 (top 22 bits, signed)
         _tempEphemeris.af0 = extendSign((_subframeWords[9] >> 2) & 0x3FFFFF, 22) * pow(2, -31);
+        _hasSF1 = true;
     }
     else if (subframeID == 2)
     {
@@ -437,6 +441,7 @@ if (subframeID == 1)
         // Word 10: toe (16 bits)
         _tempEphemeris.toe = (_subframeWords[9] >> 8) & 0xFFFF;
         _tempEphemeris.toe *= 16.0;
+        _hasSF2 = true;
     }
     else if (subframeID == 3)
     {
@@ -469,16 +474,27 @@ if (subframeID == 1)
         _tempEphemeris.iDot = extendSign(_subframeWords[9] >> 8, 14) * pow(2, -43) * GPS_PI;
 
         // --- SUBFRAME 3 COMPLETE ---
-        _tempEphemeris.isValid = true;
-
-        // Push to the Global Database!
-        ConstellationManager::getInstance().commitEphemeris(_prn, _tempEphemeris);
-
-        ConstellationManager::getInstance().printEphemerisSanityCheck(_prn);
-
-        if (_isFocused)
+        _hasSF3 = true;
+        if (_hasSF1 && _hasSF2 && _hasSF3)
         {
-            printf("\n[NAV] PRN %2d | Ephemeris fully decoded & committed to ConstellationManager!\n", _prn);
+            _tempEphemeris.isValid = true;
+            ConstellationManager::getInstance().commitEphemeris(_prn, _tempEphemeris);
+
+            if (_isFocused)
+            {
+                printf("\n[NAV] PRN %2d | Ephemeris fully decoded & committed to ConstellationManager!\n", _prn);
+                ConstellationManager::getInstance().printEphemerisSanityCheck(_prn);
+            }
+
+            // Optional: Reset flags if you want to force a fresh download every time,
+            // but keeping them true allows continuous rapid updates as long as sync isn't lost.
+        }
+        else
+        {
+            if (_isFocused)
+            {
+                printf("\n[NAV] PRN %2d | Subframe 3 received, but missing SF1 or SF2. Waiting for next cycle...\n", _prn);
+            }
         }
     }
 }
