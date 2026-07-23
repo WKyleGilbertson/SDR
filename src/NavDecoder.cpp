@@ -38,7 +38,7 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
     for (const auto &epoch : metrics.epochs)
     {
         uint32_t current_phase = (uint32_t)(_decoderSampleCounter % 20);
-        _decoderSampleCounter++; 
+        _decoderSampleCounter++;
 
         if (_bitSyncLocked)
         {
@@ -56,23 +56,26 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
         }
         else
         {
-            // --- FLL NOISE GATE ---
-            // Completely ignore symbol transitions while the FLL is pulling in
+            // --- TIME-BASED PHASES USING ABSOLUTE EPOCH COUNT ---
+            // Phase 1: FLL Noise Gate (First 1000 epochs / 1 second)
             if (_decoderSampleCounter < 1000)
             {
                 _last_symbol = epoch.symbol;
-                continue; 
+                continue;
             }
 
-            // Bit Sync Search: Histogramming
-            if (_last_symbol != 0 && epoch.symbol != _last_symbol)
+            // Phase 2: Histogram Collection Window
+            // Collect symbol transitions cleanly from epoch 1000 up to 6000 (5 full seconds)
+            if (_decoderSampleCounter < 6000)
             {
-                _sync.histograms[current_phase]++;
+                if (_last_symbol != 0 && epoch.symbol != _last_symbol)
+                {
+                    _sync.histograms[current_phase]++;
+                }
+                _last_symbol = epoch.symbol;
             }
-            _last_symbol = epoch.symbol;
-
-            // Lock acquisition check (requires 5000 clean ms of PLL data)
-            if (_msCounter++ > 5000)
+            // Phase 3: Evaluate and Lock (Triggered exactly once at epoch 6000)
+            else if (!_bitSyncLocked && _decoderSampleCounter == 6000)
             {
                 int maxVal = 0;
                 for (int i = 0; i < 20; i++)
@@ -84,7 +87,7 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
                     }
                 }
                 _bitSyncLocked = true;
-                printf("\n[NAV] Sync Locked at offset %d\n", _bitOffset);
+                printf("\n[NAV] Sync Locked at offset %d (Robust max votes: %d)\n", _bitOffset, maxVal);
             }
         }
     }
@@ -131,7 +134,8 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
         uint32_t bVal = (bit > 0) ? 1 : 0;
 
         // Apply global stream inversion if active
-        if (_isInverted) {
+        if (_isInverted)
+        {
             bVal = !bVal;
         }
 
@@ -152,10 +156,10 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
                 // Set global stream inversion based on preamble type
                 _isInverted = (fwdNormal == 0x74);
                 _d30Star = _isInverted ? 1 : 0;
-                
+
                 if (_isFocused)
                 {
-                    printf("\n[NAV] Preamble Candidate (0x%02X) found! Polarity: %s\n", 
+                    printf("\n[NAV] Preamble Candidate (0x%02X) found! Polarity: %s\n",
                            fwdNormal, _isInverted ? "INVERTED" : "NORMAL");
                 }
             }
@@ -183,15 +187,17 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
 
 bool NavDecoder::handleWord(int wordNum)
 {
-    #ifdef DEBUG_NAV
-    if (_isFocused) {
+#ifdef DEBUG_NAV
+    if (_isFocused)
+    {
         printf("\n[NAV] Word %d Candidate Raw Bits: ", wordNum);
-        for (int i = 29; i >= 0; i--) {
+        for (int i = 29; i >= 0; i--)
+        {
             printf("%d", (_shiftReg >> i) & 1);
         }
         printf("\n");
-    } 
-    #endif
+    }
+#endif
 
     // 1. Try checking parity with current state
     bool valid = isParityValid(_shiftReg, _d29Star, _d30Star);
@@ -206,12 +212,13 @@ bool NavDecoder::handleWord(int wordNum)
             _isInverted = !_isInverted;
             _d30Star = !_d30Star;
             _d29Star = !_d29Star;
-            
+
             // Preserve top bits of shift register while correcting the lower 30 bits
             _shiftReg = (_shiftReg & 0xC0000000) | invertedWord;
             valid = true;
-            
-            if (_isFocused) {
+
+            if (_isFocused)
+            {
                 printf("\n[NAV] Polarity flip detected! Permanently flipping stream polarity.\n");
             }
         }
@@ -220,17 +227,19 @@ bool NavDecoder::handleWord(int wordNum)
     if (!valid)
     {
         _parityFailCount++;
-        
-        if (_parityFailCount > 3) 
+
+        if (_parityFailCount > 3)
         {
             _frameSync = false;
-            if (_isFocused) {
+            if (_isFocused)
+            {
                 printf("\n[NAV] Too many consecutive parity failures (%d). Dropping frame sync.\n", _parityFailCount);
             }
         }
-        else 
+        else
         {
-            if (_isFocused) {
+            if (_isFocused)
+            {
                 printf("\n[NAV] Parity failed for word %d (Failure count: %d), but maintaining frame sync...\n", wordNum, _parityFailCount);
             }
         }
@@ -240,7 +249,8 @@ bool NavDecoder::handleWord(int wordNum)
     _parityFailCount = 0;
     _parityPassCount++;
 
-    if (_isFocused) {
+    if (_isFocused)
+    {
         printf("\n[NAV] Parity PASSED for Word %d!\n", wordNum);
     }
 
@@ -262,8 +272,8 @@ bool NavDecoder::handleWord(int wordNum)
 
     // Update D29* and D30* for the next word
     _d29Star = (_shiftReg >> 1) & 1;
-    _d30Star = _shiftReg & 1; 
-    
+    _d30Star = _shiftReg & 1;
+
     return true;
 }
 
