@@ -41,8 +41,8 @@ MACROS = /DMAJOR_VERSION=$(MAJOR) /DMINOR_VERSION=$(MINOR) \
 
 SDR_OBJS = $(ODIR)/sdr.obj \
            $(ODIR)/versionInfo.obj \
-           $(ODIR)/HandoffRefiner.obj \
            $(ODIR)/AcquisitionMgr.obj \
+           $(ODIR)/HandoffRefiner.obj \
            $(ODIR)/ElasticReceiver.obj \
            $(ODIR)/L1IFUtil.obj \
            $(ODIR)/NCO.obj \
@@ -56,8 +56,8 @@ SDR_OBJS = $(ODIR)/sdr.obj \
            $(ODIR)/kiss_fft.obj
 
 TESTBENCH_OBJS = $(ODIR)/testbench.obj \
-                 $(ODIR)/HandoffRefiner.obj \
                  $(ODIR)/AcquisitionMgr.obj \
+                 $(ODIR)/HandoffRefiner.obj \
                  $(ODIR)/PCSEngine.obj \
                  $(ODIR)/ChannelProcessor.obj \
                  $(ODIR)/NavDecoder.obj \
