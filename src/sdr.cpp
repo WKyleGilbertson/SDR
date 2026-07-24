@@ -16,6 +16,9 @@
 #include "PCSEngine.hpp"
 #include "TrackingEngine.h"
 #include "NavDecoder.h"
+#include "ConstellationManager.hpp"
+#include "PVTSolver.hpp"
+#include "Ephemeris.hpp"
 
 //#define CAPTURE_TRACKING_DATA
 
@@ -369,7 +372,47 @@ int main(int argc, char *argv[])
             }
             /* Tracking goes here */
             tracking.step(rx, meta, focusPRN, out, acq_needed);
+// =================================================================
+            // --- NEW: PVT ENGINE CHECK ---
+            // =================================================================
+            static int pvtTimerMs = 0;
+            pvtTimerMs += 1; // Assuming 1 iteration = ~1ms of processed data
 
+            // Check the database once every ~1000 ms (1 second)
+            if (pvtTimerMs >= 1000) 
+            {
+                pvtTimerMs = 0; // Reset timer
+
+                // Notice we use focusPRN here, so it automatically checks whichever satellite you passed in via command line!
+                if (ConstellationManager::getInstance().hasValidEphemeris(focusPRN)) 
+                {
+                    // 1. Pull the live data from the database
+                    Ephemeris liveEph = ConstellationManager::getInstance().getEphemeris(focusPRN);
+
+                    // 2. Determine the time (using Time of Ephemeris for the sanity check)
+                    double transmitTime = liveEph.toe; 
+
+                    // 3. Fire the Math Engine!
+                    Vector3 satPos = PVTSolver::calculateSatPosition(liveEph, transmitTime);
+
+                    // 4. Calculate distance from Earth center
+                    double radiusKm = std::sqrt(satPos.x * satPos.x + 
+                                                satPos.y * satPos.y + 
+                                                satPos.z * satPos.z) / 1000.0;
+
+                    printf("\n=======================================================\n");
+                    printf("[PVT ENGINE] LIVE SATELLITE POSITION (ECEF)\n");
+                    printf("=======================================================\n");
+                    printf(" PRN          : %d\n", focusPRN);
+                    printf(" Time (TOW)   : %.0f sec\n", transmitTime);
+                    printf(" X Coordinate : %15.3f meters\n", satPos.x);
+                    printf(" Y Coordinate : %15.3f meters\n", satPos.y);
+                    printf(" Z Coordinate : %15.3f meters\n", satPos.z);
+                    printf(" Orbit Radius : %15.3f km (Expected: ~26,560 km)\n", radiusKm);
+                    printf("=======================================================\n");
+                }
+            }
+            // =================================================================
             std::this_thread::sleep_for(std::chrono::microseconds(250));
         } // End of while(true)
     } // End try
