@@ -49,6 +49,7 @@ SDR_OBJS = $(ODIR)/sdr.obj \
            $(ODIR)/ChannelProcessor.obj \
            $(ODIR)/TrackingEngine.obj \
            $(ODIR)/NavDecoder.obj \
+           $(ODIR)/PVTSolver.obj \
            $(ODIR)/g2init.obj \
            $(ODIR)/PCSEngine.obj \
            $(ODIR)/kiss_fft.obj
