@@ -41,6 +41,7 @@ public:
     int getParityPassCount() const { return _parityPassCount; }
     int getParityFailCount() const { return _parityFailCount; }
     void processFramedBit(uint32_t bit); // You'll need to define this or map it to handleWord
+    double getExactTransmitTime(double currentCodePhaseChips) const;
 
 private:
     double _fs_rate;             // Needed to calculate ms from samples
@@ -93,4 +94,5 @@ private:
     bool _hasSF2 = false;
     bool _hasSF3 = false;
     int32_t extendSign(uint32_t val, int bits);
+    uint32_t _msSinceSubframeStart = 0; // Milliseconds elapsed since preamble
 };

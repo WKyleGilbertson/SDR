@@ -16,6 +16,7 @@ NavDecoder::NavDecoder(int prn, double fs) : _prn(prn), _fs_rate(fs), _subframeB
 {
     _last_symbol = 0;
     _msCounter = 0;
+    _msSinceSubframeStart = 0;
     _totalBitsCounter = 0; // Initialize these!
     _shiftReg64 = 0;
     _subframeBitIdx = 0;
@@ -53,6 +54,7 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
             _bitOffset = 0;
             _bitIntegrationI = 0.0;
             _last_symbol = 0;
+            _msSinceSubframeStart = 0;
 
             for (int i = 0; i < 20; i++)
             {
@@ -76,6 +78,7 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
     {
         uint32_t current_phase = (uint32_t)(_decoderSampleCounter % 20);
         _decoderSampleCounter++;
+        _msSinceSubframeStart++;
 
         if (_bitSyncLocked)
         {
@@ -142,6 +145,7 @@ void NavDecoder::finalizeBit(int8_t bit)
             _isInverted = (window == 0x74);
             _frameSync = true;
             _subframeBitIdx = 0;
+            _msSinceSubframeStart = 0;
             _wordCounter = 1;
             printf("\n[NAV] *** FRAME SYNC LOCKED (Polarity: %s) ***\n",
                    _isInverted ? "INVERTED" : "NORMAL");
@@ -186,6 +190,7 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
                 _preambleCandidateCount++;
                 _frameSync = true;
                 _subframeBitIdx = 8;
+                _msSinceSubframeStart = 0;
 
                 // Set global stream inversion based on preamble type
                 _isInverted = (fwdNormal == 0x74);
@@ -270,6 +275,7 @@ bool NavDecoder::handleWord(int wordNum)
             _hasSF1 = false;
             _hasSF2 = false;
             _hasSF3 = false;
+            _msSinceSubframeStart = 0;
 
             if (_isFocused)
             {
@@ -497,4 +503,19 @@ void NavDecoder::decodeSubframe(int subframeID)
             }
         }
     }
+}
+
+double NavDecoder::getExactTransmitTime(double currentCodePhaseChips) const
+{
+    // 1. Time at the very start of the current subframe
+    double startOfSubframe = (double)_tow - 6.0;
+
+    // 2. Seconds elapsed within the current subframe
+    double elapsedSeconds = (double)_msSinceSubframeStart / 1000.0;
+
+    // 3. Fractional seconds based on the correlator's code phase (0 to 1023 chips)
+    // 1023 chips = 1 millisecond. So 1023000 chips = 1 second.
+    double fractionalSeconds = currentCodePhaseChips / 1023000.0;
+
+    return startOfSubframe + elapsedSeconds + fractionalSeconds;
 }

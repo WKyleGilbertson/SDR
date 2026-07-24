@@ -372,45 +372,56 @@ int main(int argc, char *argv[])
             }
             /* Tracking goes here */
             tracking.step(rx, meta, focusPRN, out, acq_needed);
-            // =================================================================
-            // --- NEW: PVT ENGINE CHECK ---
+// =================================================================
+            // --- PVT ENGINE CHECK ---
             // =================================================================
             static int pvtTimerMs = 0;
             pvtTimerMs += 1; // Assuming 1 iteration = ~1ms of processed data
 
-            // Check the database once every ~1000 ms (1 second)
-            if (pvtTimerMs >= 1000)
+            if (pvtTimerMs >= 1000) 
             {
-                pvtTimerMs = 0; // Reset timer
+                pvtTimerMs = 0; 
 
-                // Notice we use focusPRN here, so it automatically checks whichever satellite you passed in via command line!
-                if (ConstellationManager::getInstance().hasValidEphemeris(focusPRN))
+                if (ConstellationManager::getInstance().hasValidEphemeris(focusPRN)) 
                 {
-                    // 1. Pull the live data from the database
                     Ephemeris liveEph = ConstellationManager::getInstance().getEphemeris(focusPRN);
 
-                    // 2. Determine the time (using Time of Ephemeris for the sanity check)
-                    double transmitTime = liveEph.toe;
+                    // --- 1. Get the High-Precision Transmit Time ---
+                    // tracking.getCodePhase() should return the current chip offset (0.0 to 1023.0)
+                    double exactTransmitTime = navDecoder.getExactTransmitTime(tracking.getCodePhase());
 
-                    // 3. Fire the Math Engine!
-                    Vector3 satPos = PVTSolver::calculateSatPosition(liveEph, transmitTime);
+                    // --- 2. The TOE Guard ---
+                    double timeSinceToe = exactTransmitTime - liveEph.toe;
+                    
+                    // Handle GPS week crossovers
+                    if (timeSinceToe >  302400.0) timeSinceToe -= 604800.0;
+                    if (timeSinceToe < -302400.0) timeSinceToe += 604800.0;
 
-                    // 4. Calculate distance from Earth center
-                    double radiusKm = std::sqrt(satPos.x * satPos.x +
-                                                satPos.y * satPos.y +
-                                                satPos.z * satPos.z) /
-                                      1000.0;
+                    if (std::abs(timeSinceToe) > 7200.0) {
+                        printf("\n[PVT WARN] PRN %d Ephemeris is stale (%.1f seconds old). Waiting for new subframes...\n", 
+                               focusPRN, timeSinceToe);
+                    }
+                    else 
+                    {
+                        // --- 3. Fire the Math Engine ---
+                        Vector3 satPos = PVTSolver::calculateSatPosition(liveEph, exactTransmitTime);
 
-                    printf("\n=======================================================\n");
-                    printf("[PVT ENGINE] LIVE SATELLITE POSITION (ECEF)\n");
-                    printf("=======================================================\n");
-                    printf(" PRN          : %d\n", focusPRN);
-                    printf(" Time (TOW)   : %.0f sec\n", transmitTime);
-                    printf(" X Coordinate : %15.3f meters\n", satPos.x);
-                    printf(" Y Coordinate : %15.3f meters\n", satPos.y);
-                    printf(" Z Coordinate : %15.3f meters\n", satPos.z);
-                    printf(" Orbit Radius : %15.3f km (Expected: ~26,560 km)\n", radiusKm);
-                    printf("=======================================================\n");
+                        double radiusKm = std::sqrt(satPos.x * satPos.x + 
+                                                    satPos.y * satPos.y + 
+                                                    satPos.z * satPos.z) / 1000.0;
+
+                        printf("\n=======================================================\n");
+                        printf("[PVT ENGINE] LIVE SATELLITE POSITION (ECEF)\n");
+                        printf("=======================================================\n");
+                        printf(" PRN          : %d\n", focusPRN);
+                        printf(" Transmit Time: %.6f sec (Precision)\n", exactTransmitTime);
+                        printf(" TOE Age      : %.1f sec\n", timeSinceToe);
+                        printf(" X Coordinate : %15.3f meters\n", satPos.x);
+                        printf(" Y Coordinate : %15.3f meters\n", satPos.y);
+                        printf(" Z Coordinate : %15.3f meters\n", satPos.z);
+                        printf(" Orbit Radius : %15.3f km\n", radiusKm);
+                        printf("=======================================================\n");
+                    }
                 }
             }
             // =================================================================
