@@ -388,8 +388,7 @@ int main(int argc, char *argv[])
 
                     // --- 1. Get the High-Precision Transmit Time ---
                     // tracking.getCodePhase() should return the current chip offset (0.0 to 1023.0)
-                    double exactTransmitTime = navDecoder.getExactTransmitTime(tracking.getCodePhase());
-
+                    double exactTransmitTime = tracking.getExactTransmitTime(focusPRN);
                     // --- 2. The TOE Guard ---
                     double timeSinceToe = exactTransmitTime - liveEph.toe;
                     

@@ -560,3 +560,21 @@ bool TrackingEngine::step(
   } // end for
   return did_work;
 } // end step()
+
+double TrackingEngine::getExactTransmitTime(int prn)
+{
+    // Loop through your list of active tracking channels
+    for (auto& chan : activeChannels) 
+    {
+        // Find the channel tracking our requested PRN
+        if (chan.prn == prn) 
+        {
+            // chan.decoder is a unique_ptr, so we use '->'
+            // We pass in the most recently saved code phase for this channel
+            if (chan.decoder) {
+                return chan.decoder->getExactTransmitTime(chan.last_code_phase);
+            }
+        }
+    }
+    return 0.0; // Return 0 if the channel isn't locked/tracking
+}

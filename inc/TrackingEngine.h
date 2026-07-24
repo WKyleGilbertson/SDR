@@ -88,6 +88,8 @@ public:
         reacquireQueue.pop_front();
         return true;
     }
+    // Gets the nanosecond-precision transmit time from a specific tracking channel
+    double getExactTransmitTime(int prn);
 
 private:
     void processEpoch(ChannelState &state, const EpochResult &epoch,
