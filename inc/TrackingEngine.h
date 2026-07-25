@@ -9,6 +9,11 @@
 #include <cstddef>
 #include <algorithm>
 #include <chrono>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <queue>
+#include <immintrin.h>
 
 #include "ElasticReceiver.h"
 #include "ChannelProcessor.h"
@@ -48,9 +53,19 @@ struct ChannelState
     ChannelState(int p, double fs, const AcqResult &res, G2INIT s);
 };
 
+struct ChannelTask {
+    ChannelState* state;
+    RawSample* ms_ptr;
+    int feed_samples;
+    bool process_nav; // Flag to tell the main thread if NavDecoder needs processing
+    CorrelatorResult* out_res;
+};
+
 class TrackingEngine
 {
 public:
+    TrackingEngine();
+    ~TrackingEngine();
     std::list<ChannelState> activeChannels;
     bool beginTracking(
         ElasticReceiver &rx,
@@ -108,4 +123,20 @@ private:
     bool iq_log_header_written = false;
     uint64_t iq_log_rows = 0;
     static constexpr uint64_t max_iq_log_rows = 20000;
+
+    // Thread Pool Infrastructure
+    std::vector<std::thread> _workers;
+    std::queue<ChannelTask> _task_queue;
+    std::mutex _queue_mtx;
+    std::condition_variable _cv;
+    std::atomic<int> _pending_tasks{0};
+    std::atomic<bool> _stop_pool{false};
+
+    // Synchronization for the main thread to wait until all 1ms tasks finish
+//    std::atomic<bool> _work_ready{false};
+//    std::condition_variable _cv;
+//    std::mutex _done_mtx;
+//    std::condition_variable _done_cv;
+
+    void workerLoop();
 };

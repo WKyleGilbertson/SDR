@@ -11,6 +11,52 @@ ChannelState::ChannelState(int p, double fs, const AcqResult &res, G2INIT s)
   ms_window_buffer.reserve((size_t)(fs / 1000.0));
 }
 
+TrackingEngine::TrackingEngine()
+{
+    int num_threads = 4;
+    for (int i = 0; i < num_threads; ++i) {
+        _workers.emplace_back(&TrackingEngine::workerLoop, this);
+    }
+}
+
+TrackingEngine::~TrackingEngine()
+{
+    {
+        std::lock_guard<std::mutex> lock(_queue_mtx);
+        _stop_pool = true;
+    }
+    _cv.notify_all();
+    for (auto& t : _workers) {
+        if (t.joinable()) t.join();
+    }
+}
+
+void TrackingEngine::workerLoop()
+{
+    while (true)
+    {
+        ChannelTask task;
+        
+        // 1. Sleep gently, freeing the CPU for the UDP Ingest Thread
+        {
+            std::unique_lock<std::mutex> lock(_queue_mtx);
+            _cv.wait(lock, [this]() { return _stop_pool || !_task_queue.empty(); });
+            
+            if (_stop_pool && _task_queue.empty()) return;
+            
+            task = _task_queue.front();
+            _task_queue.pop();
+        }
+
+        // 2. Execute math blazing fast
+        task.state->processor->setLoopEnables(true, true);
+        *(task.out_res) = task.state->processor->Correlator(task.ms_ptr, task.feed_samples);
+        
+        // 3. Lock-free signal back to the spinning main thread
+        _pending_tasks.fetch_sub(1, std::memory_order_release);
+    }
+}
+
 void TrackingEngine::resetNavAccumulation(ChannelState &state)
 {
   state.last_logged_sample_index = 0;
@@ -305,6 +351,190 @@ bool TrackingEngine::step(
     FILE *out,
     bool &acq_needed)
 {
+    const size_t ms_samples = (size_t)(meta.fs_rate / 1000.0);
+    const int feed_samples = (unsigned int)ms_samples;
+    bool did_work = false;
+
+    // Temporary storage for this 1ms tick
+    std::vector<ChannelTask> current_tasks;
+    std::vector<CorrelatorResult> current_results;
+    
+    // Size this to max possible channels to avoid reallocation
+    current_tasks.reserve(32);
+    current_results.resize(32); 
+
+    // ==========================================================
+    // PHASE 1: DISPATCH
+    // ==========================================================
+    int task_index = 0;
+    for (auto& state : activeChannels)
+    {
+        bool isCurrentChannelFocused = (state.prn == (int)focusPRN);
+        if (state.decoder) {
+            state.decoder->setFocus(isCurrentChannelFocused);
+        }
+
+        if (!isCurrentChannelFocused) continue; 
+
+        uint64_t write = rx.get_write_index();
+        auto timing = rx.get_timing_status(state.sampleCursor, ms_samples);
+        uint64_t oldest_available = timing.oldest_available;
+
+        // Ring buffer alignment checks with warning
+        if (state.sampleCursor < oldest_available) {
+            printf("\n[WARNING] PRN %d ring buffer overrun! Dropped %llu samples.\n", 
+                   state.prn, oldest_available - state.sampleCursor);
+            uint64_t aligned_write = write - (write % ms_samples);
+            state.sampleCursor = aligned_write - ms_samples;
+            resetNavAccumulation(state);
+            continue;
+        }
+
+        if (write < state.sampleCursor + feed_samples) continue;
+
+        RawSample *ms_ptr = nullptr;
+
+        // Use the state's persistent buffer so it survives the thread handoff
+        if (!rx.get_window(state.sampleCursor, ms_ptr, feed_samples, state.ms_window_buffer)) {
+            continue; 
+        }
+
+        // Queue the heavy DSP math
+        ChannelTask t;
+        t.state = &state;
+        t.ms_ptr = ms_ptr;
+        t.feed_samples = feed_samples;
+        t.out_res = &current_results[task_index];
+
+        current_tasks.push_back(t);
+        task_index++;
+    }
+
+// Fire the tasks into the thread pool
+    if (!current_tasks.empty())
+    {
+        did_work = true;
+        
+        // Let the workers know how many tasks must be completed
+        _pending_tasks.store(current_tasks.size(), std::memory_order_release);
+        
+        {
+            std::lock_guard<std::mutex> lock(_queue_mtx);
+            for (const auto& t : current_tasks) {
+                _task_queue.push(t);
+            }
+        }
+        
+        // Wake the sleeping workers
+        _cv.notify_all(); 
+
+        // ==========================================================
+        // PHASE 2: SYNC (Hot Spin)
+        // ==========================================================
+        // Main thread spins for ~120us until the workers hit 0.
+        // This avoids the 1-3ms OS penalty of putting the main thread to sleep.
+        while (_pending_tasks.load(std::memory_order_acquire) > 0) {
+            _mm_pause(); 
+        }
+
+        // ==========================================================
+        // PHASE 3: PROCESS RESULTS (Lightweight state updates)
+        // ==========================================================
+        for (size_t i = 0; i < current_tasks.size(); ++i)
+        {
+            ChannelState& state = *(current_tasks[i].state);
+            CorrelatorResult& res = current_results[i];
+
+            state.sampleCursor += feed_samples;
+            state.total_tracked_ms++;
+
+            // Dynamic Loop State Machine
+            if (state.total_tracked_ms == 1) {
+                state.processor->setLoopMode(LoopMode::Acquisition);
+                state.processor->setUseFLL(true); 
+            }
+            else if (state.total_tracked_ms == 200) {
+                state.processor->setLoopMode(LoopMode::PullIn);
+                state.processor->setUseFLL(true); 
+            }
+            else if (state.total_tracked_ms == 800) {
+                state.processor->setLoopMode(LoopMode::Tracking);
+                state.processor->setUseFLL(false); 
+            }
+
+            // CRITICAL: Only evaluate metrics and Nav data on an EPOCH boundary
+            if (!res.epochs.empty()) 
+            {
+                double pMag = std::hypot((double)res.Pi, (double)res.Pq);
+                bool badEpoch = ((res.snr < 6.0f) && (pMag < 8000));
+
+                if (badEpoch) state.badLockEpochs++;
+                else state.badLockEpochs = 0;
+
+                // Console output roughly every 100ms
+                if (state.total_tracked_ms % 100 < 20) {
+                    int pi_k = res.Pi / 1000;
+                    int pq_k = res.Pq / 1000;
+                    printf("\r[TE]PRN %3d | SNR %5.1f | dF %7.1f | Code %8.3f | I %3dk | Q %3dk ",
+                           res.prn, res.snr, res.doppler_hz, res.code_phase, pi_k, pq_k);
+                    fflush(stdout);
+                }
+
+                // NavDecoder Processing
+                CorrelatorResult master_res = res;
+                master_res.is_locked = true;
+
+                if (state.decoder) {
+                    state.decoder->processTrackingMetrics(master_res);
+                }
+
+                for (const auto &epoch : res.epochs) {
+                    processEpoch(state, epoch, meta, out);
+                }
+            }
+
+            // Fallback Check
+            if (state.total_tracked_ms > 800 && state.badLockEpochs >= 5) {
+                printf("\n[FALLBACK] PRN %d phase jitter detected. Falling back to FLL.\n", state.prn);
+                state.processor->setLoopMode(LoopMode::PullIn);
+                state.processor->setUseFLL(true);
+                state.total_tracked_ms = 200; 
+                state.badLockEpochs = 0; 
+            }
+            
+            // State updates for next loop
+            state.last_snr = res.snr;
+            state.last_doppler_hz = res.doppler_hz;
+            state.last_code_phase = res.code_phase;
+            state.last_carrier_nco_hz = res.carrier_nco_hz;
+            state.last_is_locked = res.is_locked;
+        }
+    }
+
+    // ==========================================================
+    // POST-PROCESS: Clean up dead channels (Outside Phase 3)
+    // ==========================================================
+    for (auto it = activeChannels.begin(); it != activeChannels.end(); ) {
+        if (it->badLockEpochs >= 50) {
+            printf("\n[LOCK LOST] PRN %d queued for focused reacquire\n", it->prn);
+            queueReacquire((uint32_t)it->prn);
+            it = activeChannels.erase(it);
+            acq_needed = true;
+        } else {
+            ++it;
+        }
+    }
+
+    return did_work;
+}
+/*
+bool TrackingEngine::step(
+    ElasticReceiver &rx,
+    const RFE_Header_t &meta,
+    uint32_t focusPRN,
+    FILE *out,
+    bool &acq_needed)
+{
   const size_t ms_samples = (size_t)(meta.fs_rate / 1000.0);
   const int feed_samples = (unsigned int)ms_samples; // Process 1 ms of data at a time
   bool did_work = false;
@@ -577,6 +807,7 @@ bool TrackingEngine::step(
   } // end for
   return did_work;
 } // end step()
+*/
 
 double TrackingEngine::getExactTransmitTime(int prn)
 {
