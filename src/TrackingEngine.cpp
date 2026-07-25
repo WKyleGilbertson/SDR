@@ -8,6 +8,7 @@ ChannelState::ChannelState(int p, double fs, const AcqResult &res, G2INIT s)
 {
   processor = std::make_unique<ChannelProcessor>(fs, result, sv);
   decoder = std::make_unique<NavDecoder>(prn, fs);
+  ms_window_buffer.reserve((size_t)(fs / 1000.0));
 }
 
 void TrackingEngine::resetNavAccumulation(ChannelState &state)
@@ -378,13 +379,8 @@ bool TrackingEngine::step(
         break;
 
       RawSample *ms_ptr = nullptr;
-      std::vector<RawSample> ms_window;
-
-      if (!rx.get_window(
-              state.sampleCursor,
-              ms_ptr,
-              feed_samples,
-              ms_window))
+      if (!rx.get_window(state.sampleCursor, ms_ptr, feed_samples,
+         state.ms_window_buffer))
       {
         break;
       }
@@ -414,7 +410,28 @@ bool TrackingEngine::step(
       state.last_logged_sample_index = this_index;
 
       state.processor->setLoopEnables(true, true);
+
+      // Start Chrono
+      auto start_time = std::chrono::high_resolution_clock::now();
+
       CorrelatorResult res = state.processor->Correlator(ms_ptr, feed_samples);
+
+      auto end_time = std::chrono::high_resolution_clock::now();
+      std::chrono::duration<double, std::micro> elapsed = end_time - start_time;
+      state.total_correlator_time_us += elapsed.count();
+      state.timing_epochs_measured++;
+
+      // Print average execution time every 1000 epochs (1 second of tracking)
+      if (state.timing_epochs_measured == 1000)
+      {
+        double avg_time = state.total_correlator_time_us / 1000.0;
+        printf("\n[PERF] PRN %d Avg Correlator Time: %.2f us per 1ms block\n",
+               state.prn, avg_time);
+
+        // Reset for the next second
+        state.total_correlator_time_us = 0.0;
+        state.timing_epochs_measured = 0;
+      }
 
       double pMag = std::hypot((double)res.Pi, (double)res.Pq);
 
@@ -475,7 +492,7 @@ bool TrackingEngine::step(
         state.processor->setLoopMode(LoopMode::PullIn);
         state.processor->setUseFLL(true);
         state.total_tracked_ms = 200; // Reset tracking timeline to ride out the FLL stage again
-        state.badLockEpochs = 0; // Reset the bad lock counter to avoid immediate reacquire
+        state.badLockEpochs = 0;      // Reset the bad lock counter to avoid immediate reacquire
       }
       // ==========================================================
 
@@ -563,18 +580,19 @@ bool TrackingEngine::step(
 
 double TrackingEngine::getExactTransmitTime(int prn)
 {
-    // Loop through your list of active tracking channels
-    for (auto& chan : activeChannels) 
+  // Loop through your list of active tracking channels
+  for (auto &chan : activeChannels)
+  {
+    // Find the channel tracking our requested PRN
+    if (chan.prn == prn)
     {
-        // Find the channel tracking our requested PRN
-        if (chan.prn == prn) 
-        {
-            // chan.decoder is a unique_ptr, so we use '->'
-            // We pass in the most recently saved code phase for this channel
-            if (chan.decoder) {
-                return chan.decoder->getExactTransmitTime(chan.last_code_phase);
-            }
-        }
+      // chan.decoder is a unique_ptr, so we use '->'
+      // We pass in the most recently saved code phase for this channel
+      if (chan.decoder)
+      {
+        return chan.decoder->getExactTransmitTime(chan.last_code_phase);
+      }
     }
-    return 0.0; // Return 0 if the channel isn't locked/tracking
+  }
+  return 0.0; // Return 0 if the channel isn't locked/tracking
 }

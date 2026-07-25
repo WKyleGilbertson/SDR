@@ -9,8 +9,13 @@ BDIR = ./bin
 
 # -- Compiler and flags --
 CC = CL
-#CFLAGS = /O2 /EHsc /I$(IDIR) /MP  /Dkiss_fft_scalar=int16_t /DFIXED_POINT=16
-CFLAGS = /Zi /Od /EHsc /I$(IDIR) /MP  /Dkiss_fft_scalar=int16_t /DFIXED_POINT=16
+# /O2 (Maximize Speed)
+# /Zi (Generate Debug Info)
+# arch:AVX2 (Unleash 256-bit SIMD match registers)
+#fp:fast (Optimize floating point aritmetic for DSP)
+CFLAGS = /O2 /Zi /arch:AVX2 /fp:fast /EHsc /I$(IDIR) /MP \
+  /Dkiss_fft_scalar=int16_t /DFIXED_POINT=16
+#CFLAGS = /Zi /Od /EHsc /I$(IDIR) /MP  /Dkiss_fft_scalar=int16_t /DFIXED_POINT=16
 LDFLAGS = /link /DEBUG
 #LDFLAGS = /link
 

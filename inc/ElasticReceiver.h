@@ -3,15 +3,10 @@
 #include <mutex>
 #include <deque>
 #include <stdint.h>
+#include <cstring>
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include "L1IFUtil.hpp"
-
-struct MillisecondBlock
-{
-    RFE_Header_t header;
-    std::vector<uint8_t> data; // 8184 bytes
-};
 
 struct RingTimingStatus
 {
@@ -32,14 +27,7 @@ public:
     ~ElasticReceiver();
 
     bool connect_to_relay(const char *ip, int port);
-    void jump_to_latest_epoch();
-    // New method: pulls N milliseconds of data at once
-    bool get_ms_blocks(uint8_t *out, RFE_Header_t &first_header, size_t num_ms);
-    size_t get_queue_size()
-    {
-        std::lock_guard<std::mutex> lock(_mtx);
-        return _ready_queue.size();
-    };
+    bool wait_for_telemetry(RFE_Header_t &out_meta);
 
     void unpack_to_ring(const uint8_t *packed,
                         size_t packed_count,
@@ -70,19 +58,19 @@ public:
     bool input_mode_checked() const {return _input_mode_checked;}
 
 private:
+    bool _has_telemetry = false;
+    RFE_Header_t _last_header{};
     void ingest_thread();
     uint16_t _samples_per_ms = 16368;
     uint8_t _packets_per_ms = 8; // 16368 samples/ms / 2046 samples/packet
     uint64_t _base_sample_index = 0;
     uint64_t _global_sample_index = 0;
     uint64_t _last_seq_num = 0;
-    // std::deque<MillisecondBlock> _ready_queue; /* ChatGPT removed */
     std::vector<RawSample> _sample_ring;
     mutable std::mutex _ring_mtx;
     uint64_t _write_index = 0;
     size_t _ring_capacity = 0;
 
-    std::deque<MillisecondBlock> _ready_queue;
     std::vector<uint8_t> _staging_buffer;
     RFE_Header_t _staging_header;
     int _staging_count = 0;

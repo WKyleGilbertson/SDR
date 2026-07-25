@@ -269,6 +269,16 @@ void ChannelProcessor::runAccumulation(
     int rotation_changes = 0;
     int sample_ticks = 0;
     uint16_t last_rot = _codeNco.getRotations();
+
+    // 1. Setup local, alias-free accumulator registers
+    int32_t loc_Ei = 0, loc_Eq = 0;
+    int32_t loc_Pi = 0, loc_Pq = 0;
+    int32_t loc_Li = 0, loc_Lq = 0;
+    size_t loc_sampleCount = 0;
+
+    // Cache class state locally to avoid pointer dereferencing
+    bool is_complex = _input_is_complex;
+
     for (size_t i = 0; i < availableSamples; ++i)
     {
         _sampleCounter++;
@@ -278,41 +288,39 @@ void ChannelProcessor::runAccumulation(
 
         uint32_t carrIdx = _carrNco.getPhase() >> (32 - 8);
 
-        // 1. Convert NCO sine/cosine to 8-bit integer for MAC
-        int8_t s = (int8_t)(_carrNco.sine(carrIdx) * 127.0f);
-        int8_t c = (int8_t)(_carrNco.cosine(carrIdx) * 127.0f);
+        int8_t s = _carrNco.sin_i8(carrIdx);
+        int8_t c = _carrNco.cos_i8(carrIdx);
         int16_t in_i = samples[i].i;
         int16_t in_q = samples[i].q;
         int16_t bb_i = 0;
         int16_t bb_q = 0;
 
-        if (_input_is_complex)
+        if (is_complex)
         {
-            // (I + jQ) * (cos - j sin) -> integer MAC (Multiply-Accumulate)
+             // (I + jQ) * (cos - j sin) -> integer MAC
              bb_i = (int16_t)(in_i * c + in_q * s);
              bb_q = (int16_t)(in_q * c - in_i * s);
         }
         else
         {
-            // Real IF: sample * local oscillator
+             // Real IF: sample * local oscillator
              bb_i = (int16_t)(in_i * c);
-             //bb_q = (int16_t)(-in_i * s);
              bb_q = (int16_t)(in_i * s);
         }
 
-        _epochAcc.Ei += (int32_t)((int32_t)bb_i * _codeNco.Early);
-        _epochAcc.Eq += (int32_t)((int32_t)bb_q * _codeNco.Early);
-        _epochAcc.Pi += (int32_t)((int32_t)bb_i * _codeNco.Prompt);
-        _epochAcc.Pq += (int32_t)((int32_t)bb_q * _codeNco.Prompt);
-        _epochAcc.Li += (int32_t)((int32_t)bb_i * _codeNco.Late);
-        _epochAcc.Lq += (int32_t)((int32_t)bb_q * _codeNco.Late);
+        // 2. Accumulate entirely in fast local registers
+        loc_Ei += (int32_t)bb_i * _codeNco.Early;
+        loc_Eq += (int32_t)bb_q * _codeNco.Early;
+        loc_Pi += (int32_t)bb_i * _codeNco.Prompt;
+        loc_Pq += (int32_t)bb_q * _codeNco.Prompt;
+        loc_Li += (int32_t)bb_i * _codeNco.Late;
+        loc_Lq += (int32_t)bb_q * _codeNco.Late;
 
-        _epochSampleCount++;
+        loc_sampleCount++;
+        sample_ticks++;
 
         _carrNco.clk();
         _codeNco.clk();
-
-        sample_ticks++;
 
         uint16_t now_rot = _codeNco.getRotations();
         if (now_rot != last_rot)
@@ -322,11 +330,22 @@ void ChannelProcessor::runAccumulation(
         }
 
 #ifdef SAMPLE_TRACE
+        int32_t prompt_i_term = (int32_t)bb_i * _codeNco.Prompt;
+        int32_t prompt_q_term = (int32_t)bb_q * _codeNco.Prompt;
         dumpSampleTrace(samples[i], carrIdx, c, s, bb_i, bb_q, prompt_i_term, prompt_q_term);
 #endif
 
-        if (_codeNco.getRotations() < prev_rotations)
+        // Epoch Rollover Check
+        if (now_rot < prev_rotations)
         {
+            // 3. Flush locals to class members BEFORE processing the epoch
+            _epochAcc.Ei += loc_Ei;
+            _epochAcc.Eq += loc_Eq;
+            _epochAcc.Pi += loc_Pi;
+            _epochAcc.Pq += loc_Pq;
+            _epochAcc.Li += loc_Li;
+            _epochAcc.Lq += loc_Lq;
+            _epochSampleCount += loc_sampleCount;
 
             _epochAcc.Ei >>= 4;
             _epochAcc.Eq >>= 4;
@@ -354,8 +373,24 @@ void ChannelProcessor::runAccumulation(
 
             harvestEpochResult(res, samples[i], i);
             fillResult(res, m, _codeNco.getCodePhase());
+
+            // 4. Reset local registers for the remainder of the buffer
+            loc_Ei = 0; loc_Eq = 0;
+            loc_Pi = 0; loc_Pq = 0;
+            loc_Li = 0; loc_Lq = 0;
+            loc_sampleCount = 0;
         }
     }
+
+    // 5. Final flush of any remaining locals at the end of the 1ms block
+    // This gives the next block a running start on the current epoch
+    _epochAcc.Ei += loc_Ei;
+    _epochAcc.Eq += loc_Eq;
+    _epochAcc.Pi += loc_Pi;
+    _epochAcc.Pq += loc_Pq;
+    _epochAcc.Li += loc_Li;
+    _epochAcc.Lq += loc_Lq;
+    _epochSampleCount += loc_sampleCount;
 }
 
 void ChannelProcessor::harvestEpochResult(

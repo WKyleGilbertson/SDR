@@ -21,11 +21,15 @@ NCO::NCO(const int lgtblsize, const float m_sample_clk)
 
     m_sintable = new float[m_len];
     m_costable = new float[m_len];
+    m_sintable_i8 = new int8_t[m_len];
+    m_costable_i8 = new int8_t[m_len];
     for (auto k = 0; k < m_len; k++)
     {
         // m_table[k] = sin(2.0 * M_PI * k / (double) m_len);
         m_sintable[k] = (float)sin(2.0 * M_PI * k / (double)m_len);
         m_costable[k] = (float)cos(2.0 * M_PI * k / (double)m_len);
+        m_sintable_i8[k] = (int8_t)(sin(2.0 * M_PI * k / (double)m_len) * 127.0f);
+        m_costable_i8[k] = (int8_t)(cos(2.0 * M_PI * k / (double)m_len) * 127.0f);
     }
     // m_phase is the variable holding our PHI[n] function from above.
     // We'll initialize our initial phase and frequency to zero
@@ -38,6 +42,8 @@ NCO::~NCO(void)
 {
     delete[] m_sintable; // On any object deletion, delete the table as well
     delete[] m_costable;
+    delete[] m_sintable_i8;
+    delete[] m_costable_i8;
 }
 
 void NCO::SetFrequency(float f)
@@ -102,17 +108,25 @@ uint32_t NCO::clk(void)
 
      EPLreg <<= 1;
      EPLreg |= (static_cast<uint64_t>(CACODE[m_rotations]) & 0x01ULL);
+    // BRANCHLESS CONVERSION:
+    // (Condition != 0) resolves to 1 or 0. 
+    // Shift left by 1 gives 2 or 0. 
+    // Subtract 1 gives 1 or -1. 
+/*    Early      = (((EPLreg & E_mask)  != 0) << 1) - 1;
+    Prompt     = (((EPLreg & P_mask)  != 0) << 1) - 1;
+    Late       = (((EPLreg & L_mask)  != 0) << 1) - 1;*/
+//    superEarly = (((EPLreg & SE_mask) != 0) << 1) - 1;
+//    superLate  = (((EPLreg & SL_mask) != 0) << 1) - 1;
 
     Early = ((EPLreg & E_mask) != 0) ? 1 : -1;
     Prompt = ((EPLreg & P_mask) != 0) ? 1 : -1;
     Late = ((EPLreg & L_mask) != 0) ? 1 : -1;
-    superEarly = ((EPLreg & SE_mask) != 0) ? 1 : -1;
-    superLate = ((EPLreg & SL_mask) != 0) ? 1 : -1;
+//    superEarly = ((EPLreg & SE_mask) != 0) ? 1 : -1;
+//    superLate = ((EPLreg & SL_mask) != 0) ? 1 : -1;
 
-    index = m_phase >> (32 - m_lglen);
-    idx = index & m_mask;
+    idx = (m_phase >> (32 - m_lglen)) & m_mask;
     return idx;
-}
+} 
 
 void NCO::InitializeEPLPipeline(float initialCodePhase, int chipTravelDelay)
 {

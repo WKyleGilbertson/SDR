@@ -154,13 +154,12 @@ int main(int argc, char *argv[])
         }
 
         std::cout << "[*] Waiting for stream telemetry..." << std::endl;
-        std::vector<uint8_t> startup_buffer(8184);
-        if (!rx.get_ms_blocks(startup_buffer.data(), meta, 1))
+       if (!rx.wait_for_telemetry(meta))
         {
             std::cerr << "[!] No data received from relay." << std::endl;
             fclose(out);
             return -1;
-        }
+        } 
 
         PCSEngine pcs((float)meta.fs_rate);
         AcquisitionMgr acqMgr(pcs);

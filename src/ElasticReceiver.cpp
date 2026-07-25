@@ -127,86 +127,45 @@ void ElasticReceiver::ingest_thread()
             // Push to queue once a full millisecond is staged
             if (_staging_count >= _packets_per_ms)
             {
-                std::lock_guard<std::mutex> lock(_mtx);
-                _ready_queue.push_back({_staging_header, _staging_buffer});
-                _last_unix_time = hdr->unix_time;
-                _last_ms_count = _ms_count;
-                _last_ms_frac = _ms_frac;
+                {
+                    std::lock_guard<std::mutex> lock(_mtx);
+                    _last_unix_time = hdr->unix_time;
+                    _last_ms_count = _ms_count;
+                    _last_ms_frac = _ms_frac;
+
+                    // Save the header so the startup sequence can grab it
+                    _last_header = _staging_header;
+                    _has_telemetry = true;
+                }
+
                 unpack_to_ring(
                     _staging_buffer.data(),
                     _staging_buffer.size(),
                     _staging_header.sample_tick,
                     hdr->unix_time);
-                /*fprintf(stdout,
-                    "[DBG] staged=%zu expected=%u\n",
-                    _staging_buffer.size(),
-                    _samples_per_ms / 2); */
-                if (_ready_queue.size() > _max_queue_size)
-                {
-                    _ready_queue.pop_front();
-                }
 
                 _staging_buffer.clear();
                 _staging_count = 0;
-                // printf("Ring write: %llu\n", _write_index);
             }
         }
     } // End of while (_is_running)
 }
 
-void ElasticReceiver::jump_to_latest_epoch()
-{
-    std::lock_guard<std::mutex> lock(_mtx);
-
-    int latest_epoch_index = -1;
-    // Walk backward from newest data to oldest
-    for (int i = (int)_ready_queue.size() - 1; i >= 0; --i)
-    {
-        // Find the most recent "Top of the Millisecond" (frac 0)
-        if ((_ready_queue[i].header.sample_tick % _samples_per_ms) == 0)
-        {
-            latest_epoch_index = i;
-            break;
-        }
-    }
-
-    if (latest_epoch_index > 0)
-    {
-        // Keep only the latest epoch and everything that came after it
-        for (int i = 0; i < latest_epoch_index; ++i)
-        {
-            _ready_queue.pop_front();
-        }
-    }
-}
-
-bool ElasticReceiver::get_ms_blocks(uint8_t *out, RFE_Header_t &first_header, size_t num_ms)
+bool ElasticReceiver::wait_for_telemetry(RFE_Header_t &out_meta)
 {
     while (_is_running)
     {
         {
             std::lock_guard<std::mutex> lock(_mtx);
-            if (_ready_queue.size() >= num_ms)
-                break;
+            if (_has_telemetry)
+            {
+                out_meta = _last_header;
+                return true;
+            }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
-
-    if (!_is_running)
-        return false;
-
-    std::lock_guard<std::mutex> lock(_mtx);
-    for (size_t i = 0; i < num_ms; ++i)
-    {
-        MillisecondBlock block = _ready_queue.front();
-        if (i == 0)
-            first_header = block.header;
-
-        memcpy(out + (i * 8184), block.data.data(), 8184);
-        _ready_queue.pop_front();
-    }
-
-    return true;
+    return false;
 }
 
 TimeTrio ElasticReceiver::get_time_trio()
@@ -396,15 +355,33 @@ bool ElasticReceiver::get_window(
         start_index < (_write_index - _ring_capacity))
         return false;
 
-    scratch.resize(count);
+    // Calculate physical starting index in the ring buffer
+    size_t read_idx = start_index % _ring_capacity;
 
-    for (unsigned int i = 0; i < count; ++i)
+    // =================================================================
+    // ZERO-COPY PATH: Data is contiguous. Return direct memory pointer.
+    // =================================================================
+    if (read_idx + count <= _ring_capacity)
     {
-        scratch[i] =
-            _sample_ring[(start_index + i) % _ring_capacity];
+        out_ptr = &_sample_ring[read_idx];
+    }
+    // =================================================================
+    // FALLBACK PATH: Data wraps around the array boundary. (Rare)
+    // =================================================================
+    else
+    {
+        scratch.resize(count);
+
+        size_t part1 = _ring_capacity - read_idx;
+        size_t part2 = count - part1;
+
+        // Fast block memory copy instead of iterating byte-by-byte
+        std::memcpy(scratch.data(), &_sample_ring[read_idx], part1 * sizeof(RawSample));
+        std::memcpy(scratch.data() + part1, &_sample_ring[0], part2 * sizeof(RawSample));
+
+        out_ptr = scratch.data();
     }
 
-    out_ptr = scratch.data();
     return true;
 }
 

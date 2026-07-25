@@ -10,8 +10,8 @@
 #include "L1IFUtil.hpp"  // Has the bit unpacking
 #include "PCSEngine.hpp" // This defines AcqResult
 
-//#define SAMPLE_TRACE
-//static constexpr float DEBUG_CODE_PHASE_SHIM =  0.0f;
+// #define SAMPLE_TRACE
+// static constexpr float DEBUG_CODE_PHASE_SHIM =  0.0f;
 
 struct EpochResult
 {
@@ -120,7 +120,7 @@ public:
                          _code_phase(0), _m_sv(0, 0), _sampleCounter(0) {}
     // The real constructor we use after lock
     ChannelProcessor(double fs_rate, const AcqResult &init, G2INIT &sv,
-         bool verboseInit = true);
+                     bool verboseInit = true);
     ~ChannelProcessor();
     CorrelatorResult Correlator(const RawSample *samples, size_t availableSamples);
     int getPRN() const { return _prn; }
@@ -129,10 +129,10 @@ public:
     void setInputIsComplex(bool is_complex) { _input_is_complex = is_complex; }
     void setLoopEnables(bool enable_pll, bool enable_dll);
     void setLoopMode(LoopMode mode);
-    void setUseFLL(bool use_fll) {_use_fll = use_fll; }
-//    void setSampleDump(FILE * pf, int max_samples);
-    void enableSampleTrace( const char *filename, size_t samples);
-    void setSampleGain(float gain) {_sampleGain = gain;}
+    void setUseFLL(bool use_fll) { _use_fll = use_fll; }
+    //    void setSampleDump(FILE * pf, int max_samples);
+    void enableSampleTrace(const char *filename, size_t samples);
+    void setSampleGain(float gain) { _sampleGain = gain; }
     void dumpSampleTrace(
         const RawSample &sample,
         uint32_t carrIdx,
@@ -142,9 +142,10 @@ public:
         float bb_q,
         int32_t prompt_i_term,
         int32_t prompt_q_term);
-    void setVerboseInit(bool enabled) {_verboseInit = enabled;}
+    void setVerboseInit(bool enabled) { _verboseInit = enabled; }
 
 private:
+
     void runAccumulation(
         const RawSample *samples,
         size_t availableSamples,
@@ -154,7 +155,7 @@ private:
                             size_t offset_samples);
 
     TrackingMetrics computeEpochDiscriminators(
-        const Accumulators& acc, size_t sampleCount);
+        const Accumulators &acc, size_t sampleCount);
 
     void updateCarrierLoop(
         const TrackingMetrics &m);
@@ -191,8 +192,8 @@ private:
     void resetAccumulators(Accumulators &acc);
     void calculateSNR(Accumulators &acc, float &snr);
 
-    void calculateLoopCoefficients( LoopFilter &lf,
-        float Bn   = -1.0f, float zeta = -1.0f, float gain = -1.0f);
+    void calculateLoopCoefficients(LoopFilter &lf,
+                                   float Bn = -1.0f, float zeta = -1.0f, float gain = -1.0f);
     // Filter Coefficients
     LoopFilter _codeLF, _carrLF;
     uint32_t _trackingEpochs = 0;
@@ -214,7 +215,7 @@ private:
     bool _enable_pll = true;
     bool _enable_dll = true;
     bool _use_fll = true;
-    FILE * _sampleDump = nullptr;
+    FILE *_sampleDump = nullptr;
     int _sampleDumpRemaining = 0;
     bool _verboseInit = true;
 };

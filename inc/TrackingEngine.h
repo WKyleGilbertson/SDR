@@ -8,6 +8,7 @@
 #include <vector>
 #include <cstddef>
 #include <algorithm>
+#include <chrono>
 
 #include "ElasticReceiver.h"
 #include "ChannelProcessor.h"
@@ -23,7 +24,7 @@ struct ChannelState
 
     std::unique_ptr<ChannelProcessor> processor;
     std::unique_ptr<NavDecoder> decoder;
-
+    std::vector<RawSample> ms_window_buffer;
     std::deque<int8_t> epochSymbols;
     uint64_t epoch_counter = 0;
     int8_t last_nav_bit = 0;
@@ -40,6 +41,9 @@ struct ChannelState
 
     double last_carrier_nco_hz = 0.0;
     bool last_is_locked = false;
+
+    double total_correlator_time_us = 0.0;
+    uint64_t timing_epochs_measured = 0;
 
     ChannelState(int p, double fs, const AcqResult &res, G2INIT s);
 };
