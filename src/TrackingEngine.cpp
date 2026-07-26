@@ -471,23 +471,24 @@ bool TrackingEngine::step(
       // CHANNEL HEALTH & EVICTION POLICY
       // ==========================================================
       // 1. ABSOLUTE DEATH CHECK FIRST (Noise floor for 50 ms)
+// 1. ABSOLUTE DEATH CHECK FIRST
       if (state.badLockEpochs >= 50)
       {
         printf("\n[-] EVICTING PRN %2d: Lock Lost\n", state.prn);
         queueReacquire((uint32_t)state.prn);
         it = activeChannels.erase(it);
-        continue; // Critical fix: continue to next channel, don't abort the 1ms tick!
+        break; // BREAK out of the while(true) loop
       }
-// 2. CHRONIC LOW SNR EVICTION (SNR < 7.0 dB for sustained duration)
+      // 2. CHRONIC LOW SNR EVICTION
       else if (state.total_tracked_ms > 2000 && res.snr < 5.0f)
       {
           state.badLockEpochs++;
-          if (state.badLockEpochs >= 50) // Require 30 consecutive ms below threshold before evicting
+          if (state.badLockEpochs >= 50)
           {
               printf("\n[-] EVICTING PRN %2d: Chronic Low SNR (%.1f dB)\n", state.prn, res.snr);
               queueReacquire((uint32_t)state.prn);
               it = activeChannels.erase(it);
-              continue;
+              break; // BREAK out of the while(true) loop
           }
       }
       else if (res.snr >= 7.0f && state.badLockEpochs > 0)

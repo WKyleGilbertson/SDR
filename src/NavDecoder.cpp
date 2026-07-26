@@ -34,6 +34,7 @@ NavDecoder::NavDecoder(int prn, double fs) : _prn(prn), _fs_rate(fs), _subframeB
     _frameSync = false;
     _navTimerMs = 0;    // Initialize the NAV timer
     _sessionEpochs = 0; // Initialize the session epoch counter
+    _referenceTow = 0;
 
     for (int i = 0; i < 20; i++)
     {
@@ -55,6 +56,8 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
             _bitIntegrationI = 0.0;
             _last_symbol = 0;
             _msSinceSubframeStart = 0;
+            _tow = 0;
+            _referenceTow = 0;
 
             for (int i = 0; i < 20; i++)
             {
@@ -190,7 +193,7 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
                 _preambleCandidateCount++;
                 _frameSync = true;
                 _subframeBitIdx = 8;
-                _msSinceSubframeStart = 0;
+                _msSinceSubframeStart = 160;
 
                 // Set global stream inversion based on preamble type
                 _isInverted = (fwdNormal == 0x74);
@@ -276,6 +279,8 @@ bool NavDecoder::handleWord(int wordNum)
             _hasSF2 = false;
             _hasSF3 = false;
             _msSinceSubframeStart = 0;
+            _tow = 0;
+            _referenceTow = 0;
 
             if (_isFocused)
             {
@@ -314,6 +319,8 @@ bool NavDecoder::handleWord(int wordNum)
         uint32_t rawTOW = (payloadWord >> 13) & 0x1FFFF;
         _tow = rawTOW * 6;
         _subframeID = (payloadWord >> 8) & 0x07;
+        _referenceTow = _tow;
+        _msSinceSubframeStart = 1200;
 
         if (_isFocused)
         {
@@ -507,25 +514,16 @@ void NavDecoder::decodeSubframe(int subframeID)
 
 double NavDecoder::getExactTransmitTime(double currentCodePhaseChips) const
 {
-    // Use _tow (which is already common across synchronized channels) 
-    // and add the fractional millisecond from the code phase.
-    double fractionalSeconds = currentCodePhaseChips / 1023000.0;
+    if (_referenceTow == 0) return 0.0;
+
+    // _referenceTow is the start of the NEXT subframe from when we anchored.
+    // So the subframe where we anchored actually started at _referenceTow - 6.0.
+    double baseTime = (double)_referenceTow - 6.0;
     
-    // If _tow is valid, use it as the base second
-    return (double)_tow + fractionalSeconds;
-}
-/*
-double NavDecoder::getExactTransmitTime(double currentCodePhaseChips) const
-{
-    // 1. Time at the very start of the current subframe
-    double startOfSubframe = (double)_tow - 6.0;
-
-    // 2. Seconds elapsed within the current subframe
+    // Add the continuously running milliseconds since that anchor
     double elapsedSeconds = (double)_msSinceSubframeStart / 1000.0;
-
-    // 3. Fractional seconds based on the correlator's code phase (0 to 1023 chips)
-    // 1023 chips = 1 millisecond. So 1023000 chips = 1 second.
+    
     double fractionalSeconds = currentCodePhaseChips / 1023000.0;
 
-    return startOfSubframe + elapsedSeconds + fractionalSeconds;
-} */
+    return baseTime + elapsedSeconds + fractionalSeconds;
+}

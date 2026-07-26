@@ -74,6 +74,7 @@ private:
     int _d29Star = 0;
     int _d30Star = 0;
     uint32_t _tow = 0;
+    uint32_t _referenceTow = 0;
     int _subframeID = 0;
     std::vector<uint8_t> _subframeBuffer;
     Observation _lastObservation = {0, 0, 0, 0, false};

@@ -187,7 +187,7 @@ int main(int argc, char *argv[])
                 }
             }
 
-            const size_t TARGET_CHANNELS = 6;
+            const size_t TARGET_CHANNELS = 5;
             static uint32_t survey_timer = 0;
 
             // Increment survey timer if we have open slots.
@@ -318,39 +318,21 @@ int main(int argc, char *argv[])
                 std::vector<Vector3> satPositions;
                 std::vector<double> pseudoranges;
 
-                // Track min and max transmit times to ensure synchronization
                 double minTransmit = 1e9;
                 double maxTransmit = -1.0;
-                double referenceReceiveTime = -1.0;
 
-                // 1. First Pass: Gather exact transmit times and normalize them
+                // 1. First Pass: Gather absolute exact transmit times
                 for (const auto &chan : tracking.activeChannels)
                 {
-                    if (ConstellationManager::getInstance().hasValidEphemeris(chan.prn))
+                    // Demand local lock, active frame sync, and a valid non-zero TOW
+                    if (chan.last_is_locked &&
+                        chan.decoder &&
+                        chan.decoder->hasSync() &&
+                        chan.decoder->getTOW() > 0 &&
+                        ConstellationManager::getInstance().hasValidEphemeris(chan.prn))
                     {
                         double exactTransmitTime = tracking.getExactTransmitTime(chan.prn);
-                        
-                        // Bring all transmit times into a common 6-second subframe window 
-                        // to eliminate multi-second phase offsets between channels
-                        double normalizedTime = fmod(exactTransmitTime, 6.0);
 
-                        if (normalizedTime < minTransmit) minTransmit = normalizedTime;
-                        if (normalizedTime > maxTransmit) maxTransmit = normalizedTime;
-                    }
-                }
-
-                // 2. Check spread on the normalized window
-                if ((maxTransmit - minTransmit) < 0.100 && minTransmit > 0)
-                {
-                    // Proceed to collect cluster observations using the absolute un-normalized times
-                    // ...
-                // 1. First Pass: Gather exact transmit times
-                /*
-                for (const auto &chan : tracking.activeChannels)
-                {
-                    if (ConstellationManager::getInstance().hasValidEphemeris(chan.prn))
-                    {
-                        double exactTransmitTime = tracking.getExactTransmitTime(chan.prn);
                         if (exactTransmitTime < minTransmit)
                             minTransmit = exactTransmitTime;
                         if (exactTransmitTime > maxTransmit)
@@ -358,16 +340,23 @@ int main(int argc, char *argv[])
                     }
                 }
 
-                // 2. Only proceed if all ephemeris-locked channels are synchronized within 100ms
-                if ((maxTransmit - minTransmit) < 3.0 && minTransmit > 0)
-                { */
+                // 2. Check spread on the absolute time (Max TOF difference is ~20ms, so 30ms window is safe)
+                if ((maxTransmit - minTransmit) < 0.030 && minTransmit > 0)
+                {
                     printf("\n=======================================================\n");
                     printf("[PVT ENGINE] COLLECTING CLUSTER OBSERVATIONS\n");
                     printf("=======================================================\n");
 
+                    // Set the artificial receiver baseline based on the CLOSEST satellite
+                    double referenceReceiveTime = maxTransmit + 0.070;
+
                     for (const auto &chan : tracking.activeChannels)
                     {
-                        if (ConstellationManager::getInstance().hasValidEphemeris(chan.prn))
+                        if (chan.last_is_locked &&
+                            chan.decoder &&
+                            chan.decoder->hasSync() &&
+                            chan.decoder->getTOW() > 0 &&
+                            ConstellationManager::getInstance().hasValidEphemeris(chan.prn))
                         {
                             Ephemeris liveEph = ConstellationManager::getInstance().getEphemeris(chan.prn);
                             double exactTransmitTime = tracking.getExactTransmitTime(chan.prn);
@@ -386,11 +375,7 @@ int main(int argc, char *argv[])
                             {
                                 Vector3 satPos = PVTSolver::calculateSatPosition(liveEph, exactTransmitTime);
 
-                                if (referenceReceiveTime < 0.0)
-                                {
-                                    referenceReceiveTime = exactTransmitTime + 0.070;
-                                }
-
+                                // Calculate actual relative time of flight
                                 double timeOfFlight = referenceReceiveTime - exactTransmitTime;
                                 double pRange = timeOfFlight * PVTSolver::SPEED_OF_LIGHT;
 
