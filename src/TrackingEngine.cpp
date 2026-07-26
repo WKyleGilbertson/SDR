@@ -351,11 +351,15 @@ bool TrackingEngine::step(
     FILE *out,
     bool &acq_needed)
 {
+    // ==========================================================
+    // CRITICAL FIX: Batch 5ms per dispatch to dominate OS latency
+    // ==========================================================
+    const int PROCESS_MS = 5; 
     const size_t ms_samples = (size_t)(meta.fs_rate / 1000.0);
-    const int feed_samples = (unsigned int)ms_samples;
+    const int feed_samples = (unsigned int)(ms_samples * PROCESS_MS);
     bool did_work = false;
 
-    // Temporary storage for this 1ms tick
+    // Temporary storage for this batch tick
     std::vector<ChannelTask> current_tasks;
     std::vector<CorrelatorResult> current_results;
     
@@ -374,6 +378,7 @@ bool TrackingEngine::step(
             state.decoder->setFocus(isCurrentChannelFocused);
         }
 
+        // Leave this in while testing the single-channel thread pool
         if (!isCurrentChannelFocused) continue; 
 
         uint64_t write = rx.get_write_index();
@@ -390,6 +395,7 @@ bool TrackingEngine::step(
             continue;
         }
 
+        // Wait until we have a full 5ms batch available
         if (write < state.sampleCursor + feed_samples) continue;
 
         RawSample *ms_ptr = nullptr;
@@ -410,7 +416,7 @@ bool TrackingEngine::step(
         task_index++;
     }
 
-// Fire the tasks into the thread pool
+    // Fire the tasks into the thread pool
     if (!current_tasks.empty())
     {
         did_work = true;
@@ -431,8 +437,7 @@ bool TrackingEngine::step(
         // ==========================================================
         // PHASE 2: SYNC (Hot Spin)
         // ==========================================================
-        // Main thread spins for ~120us until the workers hit 0.
-        // This avoids the 1-3ms OS penalty of putting the main thread to sleep.
+        // Main thread spins for ~600us (for the 5ms block) until the workers hit 0.
         while (_pending_tasks.load(std::memory_order_acquire) > 0) {
             _mm_pause(); 
         }
@@ -446,10 +451,17 @@ bool TrackingEngine::step(
             CorrelatorResult& res = current_results[i];
 
             state.sampleCursor += feed_samples;
-            state.total_tracked_ms++;
+            
+            // Increment by 5ms instead of 1ms!
+            state.total_tracked_ms += PROCESS_MS; 
 
-            // Dynamic Loop State Machine
-            if (state.total_tracked_ms == 1) {
+            // Robust Dynamic Loop State Machine (using >= bounds for 5ms jumps)
+// ==========================================================
+            // FIX: Use exact multiples of 5 to trigger state transitions
+            // only ONCE, eliminating console I/O blocking.
+            // ==========================================================
+            if (state.total_tracked_ms == PROCESS_MS) {
+                // First run (ms == 5)
                 state.processor->setLoopMode(LoopMode::Acquisition);
                 state.processor->setUseFLL(true); 
             }
@@ -472,7 +484,7 @@ bool TrackingEngine::step(
                 else state.badLockEpochs = 0;
 
                 // Console output roughly every 100ms
-                if (state.total_tracked_ms % 100 < 20) {
+                if (state.total_tracked_ms % 100 < (PROCESS_MS * 4)) {
                     int pi_k = res.Pi / 1000;
                     int pq_k = res.Pq / 1000;
                     printf("\r[TE]PRN %3d | SNR %5.1f | dF %7.1f | Code %8.3f | I %3dk | Q %3dk ",
