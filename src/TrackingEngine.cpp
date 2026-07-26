@@ -418,7 +418,7 @@ bool TrackingEngine::step(
       if (state.timing_epochs_measured == 1000)
       {
         double avg_time = state.total_correlator_time_us / 1000.0;
-        printf("\n[PERF] PRN %d Avg Correlator Time: %.2f us per 1ms block\n",
+        printf("\n[PERF] PRN %d Avg Correlator Time: %.2f us per 1ms block",
                state.prn, avg_time);
 
         // Reset for the next second
@@ -478,14 +478,26 @@ bool TrackingEngine::step(
         it = activeChannels.erase(it);
         continue; // Critical fix: continue to next channel, don't abort the 1ms tick!
       }
-      // 2. CHRONIC LOW SNR EVICTION (SNR < 7.0 dB for > 2 seconds after pull-in)
-      else if (state.total_tracked_ms > 2000 && res.snr < 7.0f)
+// 2. CHRONIC LOW SNR EVICTION (SNR < 7.0 dB for sustained duration)
+      else if (state.total_tracked_ms > 2000 && res.snr < 5.0f)
       {
-        printf("\n[-] EVICTING PRN %2d: Chronic Low SNR (%.1f dB)\n", state.prn, res.snr);
-        it = activeChannels.erase(it);
-        continue;
+          state.badLockEpochs++;
+          if (state.badLockEpochs >= 50) // Require 30 consecutive ms below threshold before evicting
+          {
+              printf("\n[-] EVICTING PRN %2d: Chronic Low SNR (%.1f dB)\n", state.prn, res.snr);
+              queueReacquire((uint32_t)state.prn);
+              it = activeChannels.erase(it);
+              continue;
+          }
       }
+      else if (res.snr >= 7.0f && state.badLockEpochs > 0)
+      {
+          // Reset the low-SNR counter if signal recovers
+          state.badLockEpochs = 0;
+      }
+
       // 3. FALLBACK CHECK (Minor phase jitter)
+      /*
       else if (state.total_tracked_ms > 800 && state.badLockEpochs >= 5)
       {
         printf("\n[FALLBACK] PRN %2d phase jitter detected. Falling back to FLL.\n", state.prn);
@@ -493,7 +505,7 @@ bool TrackingEngine::step(
         state.processor->setUseFLL(true);
         state.total_tracked_ms = 200;
         state.badLockEpochs = 0;
-      }
+      } */
       // ==========================================================
 
       state.last_snr = res.snr;
@@ -548,7 +560,7 @@ bool TrackingEngine::step(
         processEpoch(state, epoch, meta, out);
       }
 
-      if (state.total_tracked_ms % 500 == 0)
+      if (state.total_tracked_ms % 1000 == 0)
       {
         //          printf(
         //              "epoch[%zu] sym=%d Pi=%d Pq=%d N=%u off=%d\n", idx, epoch.symbol,

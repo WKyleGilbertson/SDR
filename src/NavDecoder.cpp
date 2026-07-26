@@ -124,7 +124,7 @@ void NavDecoder::processTrackingMetrics(const CorrelatorResult &metrics)
                     }
                 }
                 _bitSyncLocked = true;
-                printf("\n[NAV] Sync Locked at offset %d (True robust max votes: %d)\n", _bitOffset, maxVal);
+                printf("\n[NAV] Sync Locked at offset %d (True robust max votes: %d)", _bitOffset, maxVal);
             }
         }
     }
@@ -147,7 +147,7 @@ void NavDecoder::finalizeBit(int8_t bit)
             _subframeBitIdx = 0;
             _msSinceSubframeStart = 0;
             _wordCounter = 1;
-            printf("\n[NAV] *** FRAME SYNC LOCKED (Polarity: %s) ***\n",
+            printf("\n[NAV] *** FRAME SYNC LOCKED (Polarity: %s) ***",
                    _isInverted ? "INVERTED" : "NORMAL");
         }
     }
@@ -198,7 +198,7 @@ void NavDecoder::processBits(const std::vector<int8_t> &bits)
 
                 if (_isFocused)
                 {
-                    printf("\n[NAV] Preamble Candidate (0x%02X) found! Polarity: %s\n",
+                    printf("\n[NAV] Preamble Candidate (0x%02X) found! Polarity: %s",
                            fwdNormal, _isInverted ? "INVERTED" : "NORMAL");
                 }
             }
@@ -258,7 +258,7 @@ bool NavDecoder::handleWord(int wordNum)
 
             if (_isFocused)
             {
-                printf("\n[NAV] Polarity flip detected! Permanently flipping stream polarity.\n");
+                printf("\n[NAV] Polarity flip detected! Permanently flipping stream polarity.");
             }
         }
     }
@@ -279,14 +279,14 @@ bool NavDecoder::handleWord(int wordNum)
 
             if (_isFocused)
             {
-                printf("\n[NAV] Too many consecutive parity failures. Dropping frame sync and resetting counter.\n");
+                printf("\n[NAV] Too many consecutive parity failures. Dropping frame sync and resetting counter.");
             }
         }
         else
         {
             if (_isFocused)
             {
-                printf("\n[NAV] Parity failed for word %d (Failure count: %d), but maintaining frame sync...\n", wordNum, _parityFailCount);
+                printf("\n[NAV] Parity failed for word %d (Failure count: %d), but maintaining frame sync...", wordNum, _parityFailCount);
             }
         }
         return false;
@@ -297,7 +297,7 @@ bool NavDecoder::handleWord(int wordNum)
 
     if (_isFocused)
     {
-        printf("\n[NAV] Parity PASSED for Word %d!\n", wordNum);
+        printf("\n[NAV] Parity PASSED for Word %d!", wordNum);
     }
 
     // Payload is already normalized via global _isInverted correction
@@ -317,7 +317,7 @@ bool NavDecoder::handleWord(int wordNum)
 
         if (_isFocused)
         {
-            printf("\n[NAV] PRN %d | Verified Word %d | Subframe: %d | GPS TOW: %u sec (%.2f hours into week)\n",
+            printf("\n[NAV] PRN %d | Verified Word %d | Subframe: %d | GPS TOW: %u sec (%.2f hours into week)",
                    _prn, wordNum, _subframeID, _tow, (double)_tow / 3600.0);
         }
     }
@@ -358,7 +358,7 @@ bool NavDecoder::isParityValid(uint32_t word, int lastD29, int lastD30)
 
 void NavDecoder::processFramedBit(uint32_t bit)
 {
-    fprintf(stdout, "\n[NAV] PRN %3d | Received Bit: %2d | Word Counter: %d | Subframe Bit Index: %d\n",
+    fprintf(stdout, "\n[NAV] PRN %3d | Received Bit: %2d | Word Counter: %d | Subframe Bit Index: %d",
             _prn, bit, _wordCounter, _subframeBitIdx);
     _subframeBuffer[_subframeBitIdx++] = bit;
 
@@ -386,7 +386,7 @@ void NavDecoder::processFramedBit(uint32_t bit)
             {
                 _isInverted = !_isInverted; // Flip polarity
                 _parityFailCount = 0;       // Reset
-                printf("\n[NAV] *** Parity failed threshold, flipping polarity to: %s ***\n",
+                printf("\n[NAV] *** Parity failed threshold, flipping polarity to: %s ***",
                        _isInverted ? "INVERTED" : "NORMAL");
             }
         }
@@ -488,7 +488,7 @@ void NavDecoder::decodeSubframe(int subframeID)
 
             if (_isFocused)
             {
-                printf("\n[NAV] PRN %2d | Ephemeris fully decoded & committed to ConstellationManager!\n", _prn);
+                printf("\n[NAV] PRN %2d | Ephemeris fully decoded & committed to ConstellationManager!", _prn);
                 ConstellationManager::getInstance().printEphemerisSanityCheck(_prn);
             }
 
@@ -499,7 +499,7 @@ void NavDecoder::decodeSubframe(int subframeID)
         {
             if (_isFocused)
             {
-                printf("\n[NAV] PRN %2d | Subframe 3 received, but missing SF1 or SF2. Waiting for next cycle...\n", _prn);
+                printf("\n[NAV] PRN %2d | Subframe 3 received, but missing SF1 or SF2. Waiting for next cycle...", _prn);
             }
         }
     }
