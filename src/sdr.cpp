@@ -315,6 +315,155 @@ int main(int argc, char *argv[])
             {
                 pvtTimerMs = 0;
 
+                struct ValidChan {
+                    int prn;
+                    double transmitTime;
+                    Ephemeris eph;
+                };
+                std::vector<ValidChan> validChans;
+
+                // 1. Gather all channels that claim to have a valid time
+                for (const auto &chan : tracking.activeChannels)
+                {
+                    if (chan.last_is_locked &&
+                        chan.decoder &&
+                        chan.decoder->hasSync() &&
+                        chan.decoder->getTOW() > 0 &&
+                        ConstellationManager::getInstance().hasValidEphemeris(chan.prn))
+                    {
+                        ValidChan vc;
+                        vc.prn = chan.prn;
+                        vc.transmitTime = tracking.getExactTransmitTime(chan.prn);
+                        vc.eph = ConstellationManager::getInstance().getEphemeris(chan.prn);
+                        validChans.push_back(vc);
+                    }
+                }
+
+                // 2. Filter outliers: Find the largest cluster of synchronized satellites
+                std::vector<ValidChan> bestCluster;
+                for (size_t i = 0; i < validChans.size(); ++i)
+                {
+                    std::vector<ValidChan> currentCluster;
+                    double refTime = validChans[i].transmitTime;
+                    
+                    for (size_t j = 0; j < validChans.size(); ++j)
+                    {
+                        // Group satellites within 30ms of each other
+                        if (std::abs(validChans[j].transmitTime - refTime) < 0.030)
+                        {
+                            currentCluster.push_back(validChans[j]);
+                        }
+                    }
+                    
+                    if (currentCluster.size() > bestCluster.size())
+                    {
+                        bestCluster = currentCluster;
+                    }
+                }
+
+                // 3. Execute PVT Engine if we have at least 4 synced satellites
+                if (bestCluster.size() >= 4)
+                {
+                    printf("\n=======================================================\n");
+                    printf("[PVT ENGINE] COLLECTING CLUSTER OBSERVATIONS\n");
+                    printf("=======================================================\n");
+
+                    std::vector<Vector3> satPositions;
+                    std::vector<double> pseudoranges;
+
+                    // Find max transmit time IN THE CLEAN CLUSTER to set receiver baseline
+                    double maxTransmit = -1.0;
+                    for (const auto& vc : bestCluster) {
+                        if (vc.transmitTime > maxTransmit) maxTransmit = vc.transmitTime;
+                    }
+                    
+                    double referenceReceiveTime = maxTransmit + 0.070;
+
+                    for (const auto& vc : bestCluster)
+                    {
+                        double timeSinceToe = vc.transmitTime - vc.eph.toe;
+                        if (timeSinceToe > 302400.0) timeSinceToe -= 604800.0;
+                        if (timeSinceToe < -302400.0) timeSinceToe += 604800.0;
+
+                        if (std::abs(timeSinceToe) > 7200.0)
+                        {
+                            printf(" [WARN] PRN %2d Ephemeris stale (%.1f s old)\n", vc.prn, timeSinceToe);
+                        }
+                        else
+                        {
+                            Vector3 satPos = PVTSolver::calculateSatPosition(vc.eph, vc.transmitTime);
+
+                            // Calculate actual relative time of flight
+                            double timeOfFlight = referenceReceiveTime - vc.transmitTime;
+                            double pRange = timeOfFlight * PVTSolver::SPEED_OF_LIGHT;
+
+                            satPositions.push_back(satPos);
+                            pseudoranges.push_back(pRange);
+
+                            printf(" [+] PRN %2d | Transmit: %.6f | X: %11.0f Y: %11.0f Z: %11.0f\n",
+                                   vc.prn, vc.transmitTime, satPos.x, satPos.y, satPos.z);
+                        }
+                    }
+
+                    if (satPositions.size() >= 4)
+                    {
+                        PositionSolution sol = PositionSolver::computePosition(satPositions, pseudoranges);
+
+                        if (sol.isValid)
+                        {
+                            printf("\n=======================================================\n");
+                            printf("[PVT ENGINE] POSITION SOLUTION ACHIEVED!\n");
+                            printf("=======================================================\n");
+                            printf(" ECEF X: %15.3f meters\n", sol.ecefPosition.x);
+                            printf(" ECEF Y: %15.3f meters\n", sol.ecefPosition.y);
+                            printf(" ECEF Z: %15.3f meters\n", sol.ecefPosition.z);
+                            printf(" GDOP  : %15.3f\n", sol.gdop);
+                            printf("=======================================================\n\n");
+
+                            GeodeticCoordinates geo = PositionSolver::ecefToLLA(sol.ecefPosition);
+
+                            printf("\n=======================================================\n");
+                            printf("[PVT ENGINE] POSITION SOLUTION ACHIEVED!\n");
+                            printf("=======================================================\n");
+                            printf(" Latitude: %12.4f° N\n", geo.latitudeDegrees);
+                            printf(" Longitude: %12.4f° W\n", -geo.longitudeDegrees);
+                            printf(" Altitude: %12.3f meters\n", geo.altitudeMeters);
+                            printf(" GDOP    : %12.3f\n", sol.gdop);
+                            printf("=======================================================\n");
+                            
+                            printf("\n[*] Initial fix acquired. Exiting application.\n");
+                            fclose(out);
+                            exit(0); 
+                        }
+                        else
+                        {
+                            printf("\n[PVT] Matrix solver diverged (Poor Geometry / GDOP)\n");
+                        }
+                    }
+                }
+                else if (validChans.size() > 0)
+                {
+                    // Find actual spread just for logging
+                    double minT = 1e9, maxT = -1.0;
+                    for(const auto& vc : validChans) {
+                        if(vc.transmitTime < minT) minT = vc.transmitTime;
+                        if(vc.transmitTime > maxT) maxT = vc.transmitTime;
+                    }
+                    printf("\n[PVT] Waiting for cluster synchronization. Spread: %.3f sec (Valid Chans: %zu, Max Cluster: %zu)\n", 
+                           (maxT - minT), validChans.size(), bestCluster.size());
+                }
+            }
+            /*
+            // =================================================================
+            // --- PVT ENGINE CHECK ---
+            // =================================================================
+            static int pvtTimerMs = 0;
+            pvtTimerMs += 1;
+
+            if (pvtTimerMs >= 1000)
+            {
+                pvtTimerMs = 0;
+
                 std::vector<Vector3> satPositions;
                 std::vector<double> pseudoranges;
 
@@ -424,7 +573,7 @@ int main(int argc, char *argv[])
                 {
                     printf("\n[PVT] Waiting for cluster synchronization. Spread: %.3f sec\n", (maxTransmit - minTransmit));
                 }
-            }
+            } */
             // =================================================================
             std::this_thread::sleep_for(std::chrono::microseconds(250));
         } // End of while(true)
