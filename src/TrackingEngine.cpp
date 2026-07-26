@@ -313,19 +313,12 @@ bool TrackingEngine::step(
   {
     ChannelState &state = *it;
 
-    // 1. Explicitly evaluate focus based on the requested PRN
-    bool isCurrentChannelFocused = (state.prn == (int)focusPRN);
+    // Treat ALL channels as focused so we process them and get their debug logs
+    bool isCurrentChannelFocused = true;
 
-    // 2. Broadcast the focus state to ALL 20 parallel decoders
     if (state.decoder)
     {
       state.decoder->setFocus(isCurrentChannelFocused);
-    }
-
-    if (!isCurrentChannelFocused)
-    {
-      ++it;
-      continue;
     }
 
     // Keep processing the rest of your focus-specific tracking logic below...
@@ -380,7 +373,7 @@ bool TrackingEngine::step(
 
       RawSample *ms_ptr = nullptr;
       if (!rx.get_window(state.sampleCursor, ms_ptr, feed_samples,
-         state.ms_window_buffer))
+                         state.ms_window_buffer))
       {
         break;
       }
@@ -474,25 +467,32 @@ bool TrackingEngine::step(
         state.processor->setUseFLL(false); // Transition to exact PLL for decoding
       }
 
-      // 1. ABSOLUTE DEATH CHECK FIRST
-      // If we spend 50ms in the noise floor, the code phase is gone. Kill it.
+      // ==========================================================
+      // CHANNEL HEALTH & EVICTION POLICY
+      // ==========================================================
+      // 1. ABSOLUTE DEATH CHECK FIRST (Noise floor for 50 ms)
       if (state.badLockEpochs >= 50)
       {
-        printf("\n[LOCK LOST] PRN %d queued for focused reacquire\n", state.prn);
+        printf("\n[-] EVICTING PRN %2d: Lock Lost\n", state.prn);
         queueReacquire((uint32_t)state.prn);
         it = activeChannels.erase(it);
-        acq_needed = true;
-        return did_work;
+        continue; // Critical fix: continue to next channel, don't abort the 1ms tick!
       }
-      // 2. FALLBACK CHECK
-      // If we just have minor jitter, try dropping back to FLL.
+      // 2. CHRONIC LOW SNR EVICTION (SNR < 7.0 dB for > 2 seconds after pull-in)
+      else if (state.total_tracked_ms > 2000 && res.snr < 7.0f)
+      {
+        printf("\n[-] EVICTING PRN %2d: Chronic Low SNR (%.1f dB)\n", state.prn, res.snr);
+        it = activeChannels.erase(it);
+        continue;
+      }
+      // 3. FALLBACK CHECK (Minor phase jitter)
       else if (state.total_tracked_ms > 800 && state.badLockEpochs >= 5)
       {
-        printf("\n[FALLBACK] PRN %d phase jitter detected. Falling back to FLL.\n", state.prn);
+        printf("\n[FALLBACK] PRN %2d phase jitter detected. Falling back to FLL.\n", state.prn);
         state.processor->setLoopMode(LoopMode::PullIn);
         state.processor->setUseFLL(true);
-        state.total_tracked_ms = 200; // Reset tracking timeline to ride out the FLL stage again
-        state.badLockEpochs = 0;      // Reset the bad lock counter to avoid immediate reacquire
+        state.total_tracked_ms = 200;
+        state.badLockEpochs = 0;
       }
       // ==========================================================
 
@@ -548,14 +548,14 @@ bool TrackingEngine::step(
         processEpoch(state, epoch, meta, out);
       }
 
-      if (state.total_tracked_ms % 100 == 0)
+      if (state.total_tracked_ms % 500 == 0)
       {
         //          printf(
         //              "epoch[%zu] sym=%d Pi=%d Pq=%d N=%u off=%d\n", idx, epoch.symbol,
         //              epoch.Pi, epoch.Pq, epoch.sample_count, epoch.offset_samples);
         int pi_k = res.Pi / 1000;
         int pq_k = res.Pq / 1000;
-        printf("\r[TE]PRN %3d | SNR %5.1f | dF %7.1f | Code %8.3f | I %3dk | Q %3dk ",
+        printf("\n[TE]PRN %3d | SNR %5.1f | dF %7.1f | Code %8.3f | I %3dk | Q %3dk ",
                //"N%02d R%4.2f",
                res.prn, res.snr, res.doppler_hz, res.code_phase, pi_k, pq_k);
         //  state.nav_phase_best, state.nav_phase_ratio);

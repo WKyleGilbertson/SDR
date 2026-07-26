@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <list>
+#include <set>
 #include "L1IFUtil.hpp"
 #include "versionInfo.hpp"
 #include "ElasticReceiver.h"
@@ -18,6 +19,7 @@
 #include "NavDecoder.h"
 #include "ConstellationManager.hpp"
 #include "PVTSolver.hpp"
+#include "PositionSolver.hpp"
 #include "Ephemeris.hpp"
 
 // #define CAPTURE_TRACKING_DATA
@@ -139,9 +141,12 @@ int main(int argc, char *argv[])
     TrackingEngine tracking;
 
     uint32_t focusPRN = 131;
+    bool auto_mode = true;
+
     if (argc > 1 && argv[1] != nullptr)
     {
         focusPRN = (uint32_t)atoi(argv[1]);
+        auto_mode = false;
     }
 
     try
@@ -154,12 +159,12 @@ int main(int argc, char *argv[])
         }
 
         std::cout << "[*] Waiting for stream telemetry..." << std::endl;
-       if (!rx.wait_for_telemetry(meta))
+        if (!rx.wait_for_telemetry(meta))
         {
             std::cerr << "[!] No data received from relay." << std::endl;
             fclose(out);
             return -1;
-        } 
+        }
 
         PCSEngine pcs((float)meta.fs_rate);
         AcquisitionMgr acqMgr(pcs);
@@ -178,10 +183,111 @@ int main(int argc, char *argv[])
             {
                 if (rx.validate_ring_continuity())
                 {
-                    //                    printf("\n[RING OK] write=%llu\n", rx.get_write_index());
+                    // printf("\n[RING OK] write=%llu\n", rx.get_write_index());
                 }
             }
 
+            const size_t TARGET_CHANNELS = 4;
+            static uint32_t survey_timer = 0;
+
+            // Increment survey timer if we have open slots. 
+            // If empty, trigger immediately by forcing timer to 5000.
+            if (tracking.activeChannels.size() < TARGET_CHANNELS) {
+                survey_timer++;
+                if (tracking.activeChannels.empty()) survey_timer = 5000; 
+            } else {
+                survey_timer = 0;
+            }
+
+            // Run a survey scan every ~5 seconds if we need more satellites
+            if (survey_timer >= 5000)
+            {
+                survey_timer = 0;
+
+                // 1. Drain the reacquire queue first
+                uint32_t reacquirePrn = 0;
+                while (tracking.popReacquire(reacquirePrn) && tracking.activeChannels.size() < TARGET_CHANNELS)
+                {
+                    bool already_tracking = false;
+                    for (const auto& ch : tracking.activeChannels) { if (ch.prn == (int)reacquirePrn) already_tracking = true; }
+                    
+                    if (!already_tracking) {
+                        AcqResult fresh = {};
+                        uint64_t fresh_cursor = 0;
+                        if (runFreshFocusedAcquisition(rx, acqMgr, meta, reacquirePrn, ms_samples, acq_samples, fresh, fresh_cursor)) {
+                            tracking.beginTracking(rx, meta, fresh, fresh_cursor, acq_samples);
+                        }
+                    }
+                }
+
+                // 2. Perform a full sky survey if slots are still open
+                if (tracking.activeChannels.size() < TARGET_CHANNELS)
+                {
+                    uint64_t newest = rx.get_write_index();
+
+                    if (newest >= acq_samples + ms_samples)
+                    {
+                        uint64_t acq_cursor = newest - acq_samples;
+                        RawSample *acq_ptr = nullptr;
+                        std::vector<RawSample> acq_window;
+
+                        if (rx.get_window(acq_cursor, acq_ptr, (unsigned int)acq_samples, acq_window))
+                        {
+                            uint32_t tick_mod = acq_ptr[0].sample_tick % (uint32_t)ms_samples;
+                            if (tick_mod != 0) {
+                                acq_cursor -= tick_mod;
+                                rx.get_window(acq_cursor, acq_ptr, (unsigned int)acq_samples, acq_window);
+                            }
+
+                            auto results = acqMgr.run(meta, acq_ptr, acq_samples);
+
+                            if (!results.empty())
+                            {
+                                printf("\n[SURVEY] %zu Satellites Visible (> %.1f dB):\n", results.size(), ACQ_SNR_THRESHOLD_DB);
+                                for (const auto &res : results) {
+                                    printf("  VISIBLE | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f\n",
+                                           res.prn, res.snr, res.bin, res.codePhase);
+                                }
+
+                                std::set<int> tracked_prns;
+                                for (const auto &ch : tracking.activeChannels) {
+                                    tracked_prns.insert(ch.prn);
+                                }
+
+                                // Filter out WAAS (PRN > 32) and satellites we are already tracking
+                                std::vector<AcqResult> candidates;
+                                for (const auto &res : results) {
+                                    if (res.prn <= 32 && tracked_prns.find(res.prn) == tracked_prns.end()) {
+                                        candidates.push_back(res);
+                                    }
+                                }
+
+                                // Sort remaining by SNR
+                                std::sort(candidates.begin(), candidates.end(), [](const AcqResult& a, const AcqResult& b) {
+                                    return a.snr > b.snr;
+                                });
+
+                                // Allocate candidates to open slots
+                                size_t open_slots = TARGET_CHANNELS - tracking.activeChannels.size();
+                                size_t to_add = (candidates.size() > open_slots) ? open_slots : candidates.size();
+
+                                for (size_t i = 0; i < to_add; ++i) 
+                                {
+                                    AcqResult fresh = {};
+                                    uint64_t fresh_cursor = 0;
+
+                                    if (runFreshFocusedAcquisition(rx, acqMgr, meta, candidates[i].prn, ms_samples, acq_samples, fresh, fresh_cursor))
+                                    {
+                                        tracking.beginTracking(rx, meta, fresh, fresh_cursor, acq_samples);
+                                        printf("[+] ALLOCATED NEW TARGET: PRN %2d\n", fresh.prn);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            /*
             if (acq_needed)
             {
                 uint32_t reacquirePrn = 0;
@@ -192,21 +298,11 @@ int main(int argc, char *argv[])
                     uint64_t fresh_cursor = 0;
 
                     if (runFreshFocusedAcquisition(
-                            rx,
-                            acqMgr,
-                            meta,
-                            reacquirePrn,
-                            ms_samples,
-                            acq_samples,
-                            fresh,
-                            fresh_cursor))
+                            rx, acqMgr, meta, reacquirePrn,
+                            ms_samples, acq_samples, fresh, fresh_cursor))
                     {
                         tracking.beginTracking(
-                            rx,
-                            meta,
-                            fresh,
-                            fresh_cursor,
-                            acq_samples);
+                            rx, meta, fresh, fresh_cursor, acq_samples);
                     }
                     else
                     {
@@ -231,7 +327,6 @@ int main(int argc, char *argv[])
                     continue;
                 }
 
-                // Start with latest complete 5 ms region.
                 uint64_t acq_cursor = newest - acq_samples;
 
                 RawSample *acq_ptr = nullptr;
@@ -243,7 +338,6 @@ int main(int argc, char *argv[])
                     continue;
                 }
 
-                // Align by hardware sample_tick, not ring index.
                 uint32_t tick_mod = acq_ptr[0].sample_tick % (uint32_t)ms_samples;
 
                 if (tick_mod != 0)
@@ -275,151 +369,201 @@ int main(int argc, char *argv[])
                 if (!results.empty())
                 {
                     tracking.activeChannels.clear();
+                    std::vector<AcqResult> targets;
 
-                    const AcqResult *focusTarget = nullptr;
-
-                    for (const auto &res : results)
+                    // 1. SELECT TARGETS
+                    if (!auto_mode)
                     {
-                        if (res.prn == (int)focusPRN)
+                        for (const auto &res : results)
                         {
-                            printf(" LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f <--- Focus\n",
-                                   res.prn, res.snr, res.bin, res.codePhase);
-                            focusTarget = &res;
-                        }
-                        else
-                        {
-                            printf(" LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f\n",
-                                   res.prn, res.snr, res.bin, res.codePhase);
+                            if (res.prn == (int)focusPRN)
+                            {
+                                printf(" LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f <--- Manual Focus\n",
+                                       res.prn, res.snr, res.bin, res.codePhase);
+                                targets.push_back(res);
+                            }
                         }
                     }
+                    else
+                    {
+                        std::vector<AcqResult> gps_only;
+                        for (const auto &res : results)
+                        {
+                            if (res.prn <= 32)
+                                gps_only.push_back(res);
+                        }
+
+                        std::sort(gps_only.begin(), gps_only.end(), [](const AcqResult &a, const AcqResult &b)
+                                  { return a.snr > b.snr; });
+
+                        size_t limit = (gps_only.size() > 4) ? 4 : gps_only.size();
+                        for (size_t i = 0; i < limit; ++i)
+                        {
+                            printf(" LOCKED | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f <--- Auto Target %zu\n",
+                                   gps_only[i].prn, gps_only[i].snr, gps_only[i].bin, gps_only[i].codePhase, i + 1);
+                            targets.push_back(gps_only[i]);
+                        }
+                    }
+
                     printf("[SURVEY WIN] cursor=%llu tick=%u mod=%u samples=%zu\n",
                            (unsigned long long)acq_cursor,
                            acq_ptr[0].sample_tick,
                            acq_ptr[0].sample_tick % (uint32_t)ms_samples,
                            acq_samples);
-                    if (focusTarget != nullptr)
+
+                    // 2. BOOTSTRAP ALL TARGETS
+                    if (!targets.empty())
                     {
-                        AcqResult fresh = {};
-                        uint64_t fresh_cursor = 0;
-
-                        if (!runFreshFocusedAcquisition(
-                                rx,
-                                acqMgr,
-                                meta,
-                                focusPRN,
-                                ms_samples,
-                                acq_samples,
-                                fresh,
-                                fresh_cursor))
+                        for (const auto &target : targets)
                         {
-                            printf("[!] Unable to refresh focused acquisition for PRN %d\n",
-                                   focusPRN);
-                            continue;
-                        }
+                            AcqResult fresh = {};
+                            uint64_t fresh_cursor = 0;
 
-                        if (!tracking.beginTracking(
-                                rx,
-                                meta,
-                                fresh,
-                                fresh_cursor,
-                                acq_samples))
-                        {
-                            printf("[!] Unable to begin tracking PRN %d\n", fresh.prn);
-                            continue;
-                        }
+                            if (!runFreshFocusedAcquisition(
+                                    rx, acqMgr, meta, target.prn,
+                                    ms_samples, acq_samples, fresh, fresh_cursor))
+                            {
+                                printf("[!] Unable to refresh focused acquisition for PRN %d\n", target.prn);
+                                continue;
+                            }
 
-                        acq_needed = false;
+                            if (!tracking.beginTracking(
+                                    rx, meta, fresh, fresh_cursor, acq_samples))
+                            {
+                                printf("[!] Unable to begin tracking PRN %d\n", fresh.prn);
+                                continue;
+                            }
 
-                        printf("[*] HANDOVER SUCCESS: fresh acquisition window [%llu, %llu)\n",
-                               (unsigned long long)fresh_cursor,
-                               (unsigned long long)(fresh_cursor + acq_samples));
+                            printf("[*] HANDOVER SUCCESS: PRN %d window [%llu, %llu)\n",
+                                   fresh.prn,
+                                   (unsigned long long)fresh_cursor,
+                                   (unsigned long long)(fresh_cursor + acq_samples));
 
 #ifdef CAPTURE_TRACKING_DATA
-                        char capture_name[64];
-                        snprintf(capture_name,
-                                 sizeof(capture_name),
-                                 "tracking_prn%03d",
-                                 fresh.prn);
+                            char capture_name[64];
+                            snprintf(capture_name, sizeof(capture_name), "tracking_prn%03d", fresh.prn);
 
-                        tracking.captureReplayPackage(
-                            rx,
-                            meta,
-                            fresh,
-                            fresh_cursor,
-                            ms_samples,
-                            100,
-                            rx.input_is_complex(),
-                            capture_name);
+                            tracking.captureReplayPackage(
+                                rx, meta, fresh, fresh_cursor,
+                                ms_samples, 100, rx.input_is_complex(), capture_name);
 #endif
 
-                        auto timing =
-                            rx.get_timing_status(
-                                fresh_cursor + acq_samples,
-                                ms_samples);
+                            auto timing = rx.get_timing_status(fresh_cursor + acq_samples, ms_samples);
 
-                        printf(
-                            "[*] Fresh handoff lag=%.1f ms margin=%.1f ms ring=%.1f ms\n",
-                            timing.lag_ms,
-                            timing.margin_ms,
-                            timing.ring_ms);
+                            printf("[*] PRN %d Fresh handoff lag=%.1f ms margin=%.1f ms ring=%.1f ms\n",
+                                   fresh.prn, timing.lag_ms, timing.margin_ms, timing.ring_ms);
+                        }
 
-                        continue;
+                        acq_needed = !tracking.hasActiveChannels();
                     }
-                }
+                } // End if (!results.empty())
 
                 continue;
-            }
+            } // End if (acq_needed) */
+
             /* Tracking goes here */
             tracking.step(rx, meta, focusPRN, out, acq_needed);
-// =================================================================
+
+            // =================================================================
             // --- PVT ENGINE CHECK ---
             // =================================================================
             static int pvtTimerMs = 0;
-            pvtTimerMs += 1; // Assuming 1 iteration = ~1ms of processed data
+            pvtTimerMs += 1;
 
-            if (pvtTimerMs >= 1000) 
+            if (pvtTimerMs >= 1000)
             {
-                pvtTimerMs = 0; 
+                pvtTimerMs = 0;
 
-                if (ConstellationManager::getInstance().hasValidEphemeris(focusPRN)) 
+                std::vector<Vector3> satPositions;
+                std::vector<double> pseudoranges;
+
+                // Track min and max transmit times to ensure synchronization
+                double minTransmit = 1e9;
+                double maxTransmit = -1.0;
+                double referenceReceiveTime = -1.0;
+
+                // 1. First Pass: Gather exact transmit times
+                for (const auto &chan : tracking.activeChannels)
                 {
-                    Ephemeris liveEph = ConstellationManager::getInstance().getEphemeris(focusPRN);
-
-                    // --- 1. Get the High-Precision Transmit Time ---
-                    // tracking.getCodePhase() should return the current chip offset (0.0 to 1023.0)
-                    double exactTransmitTime = tracking.getExactTransmitTime(focusPRN);
-                    // --- 2. The TOE Guard ---
-                    double timeSinceToe = exactTransmitTime - liveEph.toe;
-                    
-                    // Handle GPS week crossovers
-                    if (timeSinceToe >  302400.0) timeSinceToe -= 604800.0;
-                    if (timeSinceToe < -302400.0) timeSinceToe += 604800.0;
-
-                    if (std::abs(timeSinceToe) > 7200.0) {
-                        printf("\n[PVT WARN] PRN %d Ephemeris is stale (%.1f seconds old). Waiting for new subframes...\n", 
-                               focusPRN, timeSinceToe);
-                    }
-                    else 
+                    if (ConstellationManager::getInstance().hasValidEphemeris(chan.prn))
                     {
-                        // --- 3. Fire the Math Engine ---
-                        Vector3 satPos = PVTSolver::calculateSatPosition(liveEph, exactTransmitTime);
-
-                        double radiusKm = std::sqrt(satPos.x * satPos.x + 
-                                                    satPos.y * satPos.y + 
-                                                    satPos.z * satPos.z) / 1000.0;
-
-                        printf("\n=======================================================\n");
-                        printf("[PVT ENGINE] LIVE SATELLITE POSITION (ECEF)\n");
-                        printf("=======================================================\n");
-                        printf(" PRN          : %d\n", focusPRN);
-                        printf(" Transmit Time: %.6f sec (Precision)\n", exactTransmitTime);
-                        printf(" TOE Age      : %.1f sec\n", timeSinceToe);
-                        printf(" X Coordinate : %15.3f meters\n", satPos.x);
-                        printf(" Y Coordinate : %15.3f meters\n", satPos.y);
-                        printf(" Z Coordinate : %15.3f meters\n", satPos.z);
-                        printf(" Orbit Radius : %15.3f km\n", radiusKm);
-                        printf("=======================================================\n");
+                        double exactTransmitTime = tracking.getExactTransmitTime(chan.prn);
+                        if (exactTransmitTime < minTransmit)
+                            minTransmit = exactTransmitTime;
+                        if (exactTransmitTime > maxTransmit)
+                            maxTransmit = exactTransmitTime;
                     }
+                }
+
+                // 2. Only proceed if all ephemeris-locked channels are synchronized within 100ms
+                if ((maxTransmit - minTransmit) < 0.100 && minTransmit > 0)
+                {
+                    printf("\n=======================================================\n");
+                    printf("[PVT ENGINE] COLLECTING CLUSTER OBSERVATIONS\n");
+                    printf("=======================================================\n");
+
+                    for (const auto &chan : tracking.activeChannels)
+                    {
+                        if (ConstellationManager::getInstance().hasValidEphemeris(chan.prn))
+                        {
+                            Ephemeris liveEph = ConstellationManager::getInstance().getEphemeris(chan.prn);
+                            double exactTransmitTime = tracking.getExactTransmitTime(chan.prn);
+
+                            double timeSinceToe = exactTransmitTime - liveEph.toe;
+                            if (timeSinceToe > 302400.0)
+                                timeSinceToe -= 604800.0;
+                            if (timeSinceToe < -302400.0)
+                                timeSinceToe += 604800.0;
+
+                            if (std::abs(timeSinceToe) > 7200.0)
+                            {
+                                printf(" [WARN] PRN %2d Ephemeris stale (%.1f s old)\n", chan.prn, timeSinceToe);
+                            }
+                            else
+                            {
+                                Vector3 satPos = PVTSolver::calculateSatPosition(liveEph, exactTransmitTime);
+
+                                if (referenceReceiveTime < 0.0)
+                                {
+                                    referenceReceiveTime = exactTransmitTime + 0.070;
+                                }
+
+                                double timeOfFlight = referenceReceiveTime - exactTransmitTime;
+                                double pRange = timeOfFlight * PVTSolver::SPEED_OF_LIGHT;
+
+                                satPositions.push_back(satPos);
+                                pseudoranges.push_back(pRange);
+
+                                printf(" [+] PRN %2d | Transmit: %.6f | X: %11.0f Y: %11.0f Z: %11.0f\n",
+                                       chan.prn, exactTransmitTime, satPos.x, satPos.y, satPos.z);
+                            }
+                        }
+                    }
+
+                    if (satPositions.size() >= 4)
+                    {
+                        PositionSolution sol = PositionSolver::computePosition(satPositions, pseudoranges);
+
+                        if (sol.isValid)
+                        {
+                            printf("\n=======================================================\n");
+                            printf("[PVT ENGINE] POSITION SOLUTION ACHIEVED!\n");
+                            printf("=======================================================\n");
+                            printf(" ECEF X: %15.3f meters\n", sol.ecefPosition.x);
+                            printf(" ECEF Y: %15.3f meters\n", sol.ecefPosition.y);
+                            printf(" ECEF Z: %15.3f meters\n", sol.ecefPosition.z);
+                            printf(" GDOP  : %15.3f\n", sol.gdop);
+                            printf("=======================================================\n\n");
+                        }
+                        else
+                        {
+                            printf("\n[PVT] Matrix solver diverged (Poor Geometry / GDOP)\n");
+                        }
+                    }
+                }
+                else if (minTransmit != 1e9)
+                {
+                    printf("\n[PVT] Waiting for cluster synchronization. Spread: %.3f sec\n", (maxTransmit - minTransmit));
                 }
             }
             // =================================================================
