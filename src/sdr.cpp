@@ -442,8 +442,6 @@ int main(int argc, char *argv[])
                         }
                     }
 
-                    // ... [Keep existing solver execution code below this] ...
-
                     if (satPositions.size() >= 4)
                     {
                         PositionSolution sol = PositionSolver::computePosition(satPositions, pseudoranges);
@@ -471,7 +469,8 @@ int main(int argc, char *argv[])
                             printf("=======================================================\n");
 
                             printf("\n[*] Initial fix acquired. Exiting application.\n");
-                            fclose(out);
+                            if (out)
+                                fclose(out);
                             exit(0);
                         }
                         else

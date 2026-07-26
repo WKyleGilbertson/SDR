@@ -1,5 +1,6 @@
 #include "TrackingEngine.h"
 #include "HandoffRefiner.hpp"
+#include "ConstellationManager.hpp"
 #include <cmath>
 // #define TRK_LAG_DEBUG
 
@@ -467,14 +468,20 @@ bool TrackingEngine::step(
         state.processor->setUseFLL(false); // Transition to exact PLL for decoding
       }
 
-      // ==========================================================
+// ==========================================================
       // CHANNEL HEALTH & EVICTION POLICY
       // ==========================================================
       // 1. ABSOLUTE DEATH CHECK FIRST (Noise floor for 50 ms)
-// 1. ABSOLUTE DEATH CHECK FIRST
       if (state.badLockEpochs >= 50)
       {
         printf("\n[-] EVICTING PRN %2d: Lock Lost\n", state.prn);
+        
+        // --- WIPE STALE EPHEMERIS ---
+        Ephemeris emptyEph = {};
+        emptyEph.isValid = false;
+        ConstellationManager::getInstance().commitEphemeris(state.prn, emptyEph);
+        // ----------------------------
+
         queueReacquire((uint32_t)state.prn);
         it = activeChannels.erase(it);
         break; // BREAK out of the while(true) loop
@@ -486,6 +493,13 @@ bool TrackingEngine::step(
           if (state.badLockEpochs >= 50)
           {
               printf("\n[-] EVICTING PRN %2d: Chronic Low SNR (%.1f dB)\n", state.prn, res.snr);
+              
+              // --- WIPE STALE EPHEMERIS ---
+              Ephemeris emptyEph = {};
+              emptyEph.isValid = false;
+              ConstellationManager::getInstance().commitEphemeris(state.prn, emptyEph);
+              // ----------------------------
+
               queueReacquire((uint32_t)state.prn);
               it = activeChannels.erase(it);
               break; // BREAK out of the while(true) loop
