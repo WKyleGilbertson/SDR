@@ -54,8 +54,10 @@ PositionSolution PositionSolver::computePosition(
     }
 
     // State vector: [X, Y, Z, c*dt]
-    // We start our guess at the center of the Earth (0,0,0) with 0 clock bias.
-    Eigen::Vector4d state = Eigen::Vector4d::Zero();
+    // Start the guess on the surface of the Earth, roughly in North America
+    // (This prevents Jacobian linearization from diverging)
+    Eigen::Vector4d state;
+    state << -1280000.0, -4700000.0, 4000000.0, 0.0; // Rough ECEF for Denver, CO  
 
     Eigen::MatrixXd H(numSats, 4);     // Geometry Matrix (Jacobian)
     Eigen::VectorXd deltaRho(numSats); // Pseudorange residuals (Errors)
