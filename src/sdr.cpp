@@ -315,7 +315,8 @@ int main(int argc, char *argv[])
             {
                 pvtTimerMs = 0;
 
-                struct ValidChan {
+                struct ValidChan
+                {
                     int prn;
                     double transmitTime;
                     Ephemeris eph;
@@ -345,7 +346,7 @@ int main(int argc, char *argv[])
                 {
                     std::vector<ValidChan> currentCluster;
                     double refTime = validChans[i].transmitTime;
-                    
+
                     for (size_t j = 0; j < validChans.size(); ++j)
                     {
                         // Group satellites within 30ms of each other
@@ -354,7 +355,7 @@ int main(int argc, char *argv[])
                             currentCluster.push_back(validChans[j]);
                         }
                     }
-                    
+
                     if (currentCluster.size() > bestCluster.size())
                     {
                         bestCluster = currentCluster;
@@ -373,17 +374,41 @@ int main(int argc, char *argv[])
 
                     // Find max transmit time IN THE CLEAN CLUSTER to set receiver baseline
                     double maxTransmit = -1.0;
-                    for (const auto& vc : bestCluster) {
-                        if (vc.transmitTime > maxTransmit) maxTransmit = vc.transmitTime;
+                    for (const auto &vc : bestCluster)
+                    {
+                        // 1. Calculate Satellite Clock Bias
+                        double dt = vc.transmitTime - vc.eph.toc;
+                        if (dt > 302400.0)
+                            dt -= 604800.0;
+                        if (dt < -302400.0)
+                            dt += 604800.0;
+                        double dt_sv = vc.eph.af0 + vc.eph.af1 * dt + vc.eph.af2 * dt * dt;
+
+                        // 2. Correct the raw transmit time to true GPS system time
+                        double t_tx_true = vc.transmitTime - dt_sv;
+
+                        if (t_tx_true > maxTransmit)
+                            maxTransmit = t_tx_true;
                     }
-                    
+
                     double referenceReceiveTime = maxTransmit + 0.070;
 
-                    for (const auto& vc : bestCluster)
+                    for (const auto &vc : bestCluster)
                     {
-                        double timeSinceToe = vc.transmitTime - vc.eph.toe;
-                        if (timeSinceToe > 302400.0) timeSinceToe -= 604800.0;
-                        if (timeSinceToe < -302400.0) timeSinceToe += 604800.0;
+                        // Apply the exact same clock correction
+                        double dt = vc.transmitTime - vc.eph.toc;
+                        if (dt > 302400.0)
+                            dt -= 604800.0;
+                        if (dt < -302400.0)
+                            dt += 604800.0;
+                        double dt_sv = vc.eph.af0 + vc.eph.af1 * dt + vc.eph.af2 * dt * dt;
+                        double t_tx_true = vc.transmitTime - dt_sv;
+
+                        double timeSinceToe = t_tx_true - vc.eph.toe;
+                        if (timeSinceToe > 302400.0)
+                            timeSinceToe -= 604800.0;
+                        if (timeSinceToe < -302400.0)
+                            timeSinceToe += 604800.0;
 
                         if (std::abs(timeSinceToe) > 7200.0)
                         {
@@ -391,19 +416,29 @@ int main(int argc, char *argv[])
                         }
                         else
                         {
-                            Vector3 satPos = PVTSolver::calculateSatPosition(vc.eph, vc.transmitTime);
+                            // Calculate position at the TRUE transmit time
+                            Vector3 satPos = PVTSolver::calculateSatPosition(vc.eph, t_tx_true);
 
                             // Calculate actual relative time of flight
-                            double timeOfFlight = referenceReceiveTime - vc.transmitTime;
+                            double timeOfFlight = referenceReceiveTime - t_tx_true;
                             double pRange = timeOfFlight * PVTSolver::SPEED_OF_LIGHT;
+
+                            // 3. Apply Sagnac Effect (Earth Rotation during TOF)
+                            double theta = PVTSolver::WGS84_OMEGA_E * timeOfFlight;
+                            double x_corr = satPos.x + satPos.y * theta;
+                            double y_corr = -satPos.x * theta + satPos.y;
+                            satPos.x = x_corr;
+                            satPos.y = y_corr;
 
                             satPositions.push_back(satPos);
                             pseudoranges.push_back(pRange);
 
                             printf(" [+] PRN %2d | Transmit: %.6f | X: %11.0f Y: %11.0f Z: %11.0f\n",
-                                   vc.prn, vc.transmitTime, satPos.x, satPos.y, satPos.z);
+                                   vc.prn, t_tx_true, satPos.x, satPos.y, satPos.z);
                         }
                     }
+
+                    // ... [Keep existing solver execution code below this] ...
 
                     if (satPositions.size() >= 4)
                     {
@@ -430,10 +465,10 @@ int main(int argc, char *argv[])
                             printf(" Altitude: %12.3f meters\n", geo.altitudeMeters);
                             printf(" GDOP    : %12.3f\n", sol.gdop);
                             printf("=======================================================\n");
-                            
+
                             printf("\n[*] Initial fix acquired. Exiting application.\n");
                             fclose(out);
-                            exit(0); 
+                            exit(0);
                         }
                         else
                         {
@@ -445,135 +480,17 @@ int main(int argc, char *argv[])
                 {
                     // Find actual spread just for logging
                     double minT = 1e9, maxT = -1.0;
-                    for(const auto& vc : validChans) {
-                        if(vc.transmitTime < minT) minT = vc.transmitTime;
-                        if(vc.transmitTime > maxT) maxT = vc.transmitTime;
+                    for (const auto &vc : validChans)
+                    {
+                        if (vc.transmitTime < minT)
+                            minT = vc.transmitTime;
+                        if (vc.transmitTime > maxT)
+                            maxT = vc.transmitTime;
                     }
-                    printf("\n[PVT] Waiting for cluster synchronization. Spread: %.3f sec (Valid Chans: %zu, Max Cluster: %zu)\n", 
+                    printf("\n[PVT] Waiting for cluster synchronization. Spread: %.3f sec (Valid Chans: %zu, Max Cluster: %zu)\n",
                            (maxT - minT), validChans.size(), bestCluster.size());
                 }
             }
-            /*
-            // =================================================================
-            // --- PVT ENGINE CHECK ---
-            // =================================================================
-            static int pvtTimerMs = 0;
-            pvtTimerMs += 1;
-
-            if (pvtTimerMs >= 1000)
-            {
-                pvtTimerMs = 0;
-
-                std::vector<Vector3> satPositions;
-                std::vector<double> pseudoranges;
-
-                double minTransmit = 1e9;
-                double maxTransmit = -1.0;
-
-                // 1. First Pass: Gather absolute exact transmit times
-                for (const auto &chan : tracking.activeChannels)
-                {
-                    // Demand local lock, active frame sync, and a valid non-zero TOW
-                    if (chan.last_is_locked &&
-                        chan.decoder &&
-                        chan.decoder->hasSync() &&
-                        chan.decoder->getTOW() > 0 &&
-                        ConstellationManager::getInstance().hasValidEphemeris(chan.prn))
-                    {
-                        double exactTransmitTime = tracking.getExactTransmitTime(chan.prn);
-
-                        if (exactTransmitTime < minTransmit)
-                            minTransmit = exactTransmitTime;
-                        if (exactTransmitTime > maxTransmit)
-                            maxTransmit = exactTransmitTime;
-                    }
-                }
-
-                // 2. Check spread on the absolute time (Max TOF difference is ~20ms, so 30ms window is safe)
-                if ((maxTransmit - minTransmit) < 0.030 && minTransmit > 0)
-                {
-                    printf("\n=======================================================\n");
-                    printf("[PVT ENGINE] COLLECTING CLUSTER OBSERVATIONS\n");
-                    printf("=======================================================\n");
-
-                    // Set the artificial receiver baseline based on the CLOSEST satellite
-                    double referenceReceiveTime = maxTransmit + 0.070;
-
-                    for (const auto &chan : tracking.activeChannels)
-                    {
-                        if (chan.last_is_locked &&
-                            chan.decoder &&
-                            chan.decoder->hasSync() &&
-                            chan.decoder->getTOW() > 0 &&
-                            ConstellationManager::getInstance().hasValidEphemeris(chan.prn))
-                        {
-                            Ephemeris liveEph = ConstellationManager::getInstance().getEphemeris(chan.prn);
-                            double exactTransmitTime = tracking.getExactTransmitTime(chan.prn);
-
-                            double timeSinceToe = exactTransmitTime - liveEph.toe;
-                            if (timeSinceToe > 302400.0)
-                                timeSinceToe -= 604800.0;
-                            if (timeSinceToe < -302400.0)
-                                timeSinceToe += 604800.0;
-
-                            if (std::abs(timeSinceToe) > 7200.0)
-                            {
-                                printf(" [WARN] PRN %2d Ephemeris stale (%.1f s old)\n", chan.prn, timeSinceToe);
-                            }
-                            else
-                            {
-                                Vector3 satPos = PVTSolver::calculateSatPosition(liveEph, exactTransmitTime);
-
-                                // Calculate actual relative time of flight
-                                double timeOfFlight = referenceReceiveTime - exactTransmitTime;
-                                double pRange = timeOfFlight * PVTSolver::SPEED_OF_LIGHT;
-
-                                satPositions.push_back(satPos);
-                                pseudoranges.push_back(pRange);
-
-                                printf(" [+] PRN %2d | Transmit: %.6f | X: %11.0f Y: %11.0f Z: %11.0f\n",
-                                       chan.prn, exactTransmitTime, satPos.x, satPos.y, satPos.z);
-                            }
-                        }
-                    }
-
-                    if (satPositions.size() >= 4)
-                    {
-                        PositionSolution sol = PositionSolver::computePosition(satPositions, pseudoranges);
-
-                        if (sol.isValid)
-                        {
-                            printf("\n=======================================================\n");
-                            printf("[PVT ENGINE] POSITION SOLUTION ACHIEVED!\n");
-                            printf("=======================================================\n");
-                            printf(" ECEF X: %15.3f meters\n", sol.ecefPosition.x);
-                            printf(" ECEF Y: %15.3f meters\n", sol.ecefPosition.y);
-                            printf(" ECEF Z: %15.3f meters\n", sol.ecefPosition.z);
-                            printf(" GDOP  : %15.3f\n", sol.gdop);
-                            printf("=======================================================\n\n");
-
-                            GeodeticCoordinates geo = PositionSolver::ecefToLLA(sol.ecefPosition);
-
-                            printf("\n=======================================================\n");
-                            printf("[PVT ENGINE] POSITION SOLUTION ACHIEVED!\n");
-                            printf("=======================================================\n");
-                            printf(" Latitude: %12.4f° N\n", geo.latitudeDegrees);
-                            printf(" Longitude: %12.4f° W\n", -geo.longitudeDegrees); // Displaying as West
-                            printf(" Altitude: %12.3f meters\n", geo.altitudeMeters);
-                            printf(" GDOP    : %12.3f\n", sol.gdop);
-                            printf("=======================================================\n\n");
-                        }
-                        else
-                        {
-                            printf("\n[PVT] Matrix solver diverged (Poor Geometry / GDOP)\n");
-                        }
-                    }
-                }
-                else if (minTransmit != 1e9)
-                {
-                    printf("\n[PVT] Waiting for cluster synchronization. Spread: %.3f sec\n", (maxTransmit - minTransmit));
-                }
-            } */
             // =================================================================
             std::this_thread::sleep_for(std::chrono::microseconds(250));
         } // End of while(true)
