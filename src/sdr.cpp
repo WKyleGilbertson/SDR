@@ -187,7 +187,7 @@ int main(int argc, char *argv[])
                 }
             }
 
-            const size_t TARGET_CHANNELS = 5;
+            const size_t TARGET_CHANNELS = 6;
             static uint32_t survey_timer = 0;
 
             // Increment survey timer if we have open slots.
@@ -391,7 +391,10 @@ int main(int argc, char *argv[])
                             maxTransmit = t_tx_true;
                     }
 
-                    double referenceReceiveTime = maxTransmit + 0.070;
+                    // We assume the signal took roughly 75ms to reach Earth.
+                    // IMPORTANT: This time MUST be identical for all satellites in the cluster.
+                    // The matrix solver will automatically absorb any error here into 'clock bias'.
+                    double unifiedReceiveTime = maxTransmit + 0.075;
 
                     for (const auto &vc : bestCluster)
                     {
@@ -419,8 +422,9 @@ int main(int argc, char *argv[])
                             // Calculate position at the TRUE transmit time
                             Vector3 satPos = PVTSolver::calculateSatPosition(vc.eph, t_tx_true);
 
-                            // Calculate actual relative time of flight
-                            double timeOfFlight = referenceReceiveTime - t_tx_true;
+                            // The pseudorange is the difference between the UNIFIED receive time
+                            // and the EXACT corrected transmit time for this specific satellite.
+                            double timeOfFlight = unifiedReceiveTime - t_tx_true;
                             double pRange = timeOfFlight * PVTSolver::SPEED_OF_LIGHT;
 
                             // 3. Apply Sagnac Effect (Earth Rotation during TOF)
@@ -433,8 +437,8 @@ int main(int argc, char *argv[])
                             satPositions.push_back(satPos);
                             pseudoranges.push_back(pRange);
 
-                            printf(" [+] PRN %2d | Transmit: %.6f | X: %11.0f Y: %11.0f Z: %11.0f\n",
-                                   vc.prn, t_tx_true, satPos.x, satPos.y, satPos.z);
+                            printf(" [+] PRN %2d | Transmit: %.6f | X: %11.0f Y: %11.0f Z: %11.0f | PRange: %.1f\n",
+                                   vc.prn, t_tx_true, satPos.x, satPos.y, satPos.z, pRange);
                         }
                     }
 
