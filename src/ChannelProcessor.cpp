@@ -146,19 +146,19 @@ void ChannelProcessor::setLoopMode(LoopMode mode)
         calculateLoopCoefficients(_carrLF, 40.0f, 0.707f, 1.0f);
         calculateLoopCoefficients(_codeLF, 20.0f, 0.707f, 1.0f);
         if (_verboseInit)
-            fprintf(stdout, "\n[LOOPS] Acquisition\n");
+            fprintf(stdout, "\n[LOOPS] Acquisition PRN: %3d", _prn);
         break;
 
     case LoopMode::PullIn:
         calculateLoopCoefficients(_carrLF, 30.0f, 0.707f, 1.0f);
         calculateLoopCoefficients(_codeLF, 10.0f, 0.707f, 1.0f);
-        fprintf(stdout, "\n[LOOPS] Pull-In\n");
+        fprintf(stdout, "\n[LOOPS] Pull-In PRN: %3d", _prn);
         break;
 
     case LoopMode::Tracking:
         calculateLoopCoefficients(_carrLF, 20.0f, 0.707f, 1.0f);
         calculateLoopCoefficients(_codeLF, 5.0f, 0.707f, 1.0f);
-        fprintf(stdout, "\n[LOOPS] Tracking");
+        fprintf(stdout, "\n[LOOPS] Tracking PRN: %3d", _prn);
         break;
     }
 }

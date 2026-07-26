@@ -187,15 +187,19 @@ int main(int argc, char *argv[])
                 }
             }
 
-            const size_t TARGET_CHANNELS = 4;
+            const size_t TARGET_CHANNELS = 6;
             static uint32_t survey_timer = 0;
 
-            // Increment survey timer if we have open slots. 
+            // Increment survey timer if we have open slots.
             // If empty, trigger immediately by forcing timer to 5000.
-            if (tracking.activeChannels.size() < TARGET_CHANNELS) {
+            if (tracking.activeChannels.size() < TARGET_CHANNELS)
+            {
                 survey_timer++;
-                if (tracking.activeChannels.empty()) survey_timer = 5000; 
-            } else {
+                if (tracking.activeChannels.empty())
+                    survey_timer = 5000;
+            }
+            else
+            {
                 survey_timer = 0;
             }
 
@@ -209,12 +213,18 @@ int main(int argc, char *argv[])
                 while (tracking.popReacquire(reacquirePrn) && tracking.activeChannels.size() < TARGET_CHANNELS)
                 {
                     bool already_tracking = false;
-                    for (const auto& ch : tracking.activeChannels) { if (ch.prn == (int)reacquirePrn) already_tracking = true; }
-                    
-                    if (!already_tracking) {
+                    for (const auto &ch : tracking.activeChannels)
+                    {
+                        if (ch.prn == (int)reacquirePrn)
+                            already_tracking = true;
+                    }
+
+                    if (!already_tracking)
+                    {
                         AcqResult fresh = {};
                         uint64_t fresh_cursor = 0;
-                        if (runFreshFocusedAcquisition(rx, acqMgr, meta, reacquirePrn, ms_samples, acq_samples, fresh, fresh_cursor)) {
+                        if (runFreshFocusedAcquisition(rx, acqMgr, meta, reacquirePrn, ms_samples, acq_samples, fresh, fresh_cursor))
+                        {
                             tracking.beginTracking(rx, meta, fresh, fresh_cursor, acq_samples);
                         }
                     }
@@ -234,7 +244,8 @@ int main(int argc, char *argv[])
                         if (rx.get_window(acq_cursor, acq_ptr, (unsigned int)acq_samples, acq_window))
                         {
                             uint32_t tick_mod = acq_ptr[0].sample_tick % (uint32_t)ms_samples;
-                            if (tick_mod != 0) {
+                            if (tick_mod != 0)
+                            {
                                 acq_cursor -= tick_mod;
                                 rx.get_window(acq_cursor, acq_ptr, (unsigned int)acq_samples, acq_window);
                             }
@@ -244,34 +255,37 @@ int main(int argc, char *argv[])
                             if (!results.empty())
                             {
                                 printf("\n[SURVEY] %zu Satellites Visible (> %.1f dB):\n", results.size(), ACQ_SNR_THRESHOLD_DB);
-                                for (const auto &res : results) {
+                                for (const auto &res : results)
+                                {
                                     printf("  VISIBLE | PRN %3d | SNR %5.1f | Bin %3d | Code %9.4f\n",
                                            res.prn, res.snr, res.bin, res.codePhase);
                                 }
 
                                 std::set<int> tracked_prns;
-                                for (const auto &ch : tracking.activeChannels) {
+                                for (const auto &ch : tracking.activeChannels)
+                                {
                                     tracked_prns.insert(ch.prn);
                                 }
 
                                 // Filter out WAAS (PRN > 32) and satellites we are already tracking
                                 std::vector<AcqResult> candidates;
-                                for (const auto &res : results) {
-                                    if (res.prn <= 32 && tracked_prns.find(res.prn) == tracked_prns.end()) {
+                                for (const auto &res : results)
+                                {
+                                    if (res.prn <= 32 && tracked_prns.find(res.prn) == tracked_prns.end())
+                                    {
                                         candidates.push_back(res);
                                     }
                                 }
 
                                 // Sort remaining by SNR
-                                std::sort(candidates.begin(), candidates.end(), [](const AcqResult& a, const AcqResult& b) {
-                                    return a.snr > b.snr;
-                                });
+                                std::sort(candidates.begin(), candidates.end(), [](const AcqResult &a, const AcqResult &b)
+                                          { return a.snr > b.snr; });
 
                                 // Allocate candidates to open slots
                                 size_t open_slots = TARGET_CHANNELS - tracking.activeChannels.size();
                                 size_t to_add = (candidates.size() > open_slots) ? open_slots : candidates.size();
 
-                                for (size_t i = 0; i < to_add; ++i) 
+                                for (size_t i = 0; i < to_add; ++i)
                                 {
                                     AcqResult fresh = {};
                                     uint64_t fresh_cursor = 0;
@@ -309,7 +323,29 @@ int main(int argc, char *argv[])
                 double maxTransmit = -1.0;
                 double referenceReceiveTime = -1.0;
 
+                // 1. First Pass: Gather exact transmit times and normalize them
+                for (const auto &chan : tracking.activeChannels)
+                {
+                    if (ConstellationManager::getInstance().hasValidEphemeris(chan.prn))
+                    {
+                        double exactTransmitTime = tracking.getExactTransmitTime(chan.prn);
+                        
+                        // Bring all transmit times into a common 6-second subframe window 
+                        // to eliminate multi-second phase offsets between channels
+                        double normalizedTime = fmod(exactTransmitTime, 6.0);
+
+                        if (normalizedTime < minTransmit) minTransmit = normalizedTime;
+                        if (normalizedTime > maxTransmit) maxTransmit = normalizedTime;
+                    }
+                }
+
+                // 2. Check spread on the normalized window
+                if ((maxTransmit - minTransmit) < 0.100 && minTransmit > 0)
+                {
+                    // Proceed to collect cluster observations using the absolute un-normalized times
+                    // ...
                 // 1. First Pass: Gather exact transmit times
+                /*
                 for (const auto &chan : tracking.activeChannels)
                 {
                     if (ConstellationManager::getInstance().hasValidEphemeris(chan.prn))
@@ -323,9 +359,8 @@ int main(int argc, char *argv[])
                 }
 
                 // 2. Only proceed if all ephemeris-locked channels are synchronized within 100ms
-                //if ((maxTransmit - minTransmit) < 0.100 && minTransmit > 0)
                 if ((maxTransmit - minTransmit) < 3.0 && minTransmit > 0)
-                {
+                { */
                     printf("\n=======================================================\n");
                     printf("[PVT ENGINE] COLLECTING CLUSTER OBSERVATIONS\n");
                     printf("=======================================================\n");
@@ -381,6 +416,17 @@ int main(int argc, char *argv[])
                             printf(" ECEF Y: %15.3f meters\n", sol.ecefPosition.y);
                             printf(" ECEF Z: %15.3f meters\n", sol.ecefPosition.z);
                             printf(" GDOP  : %15.3f\n", sol.gdop);
+                            printf("=======================================================\n\n");
+
+                            GeodeticCoordinates geo = PositionSolver::ecefToLLA(sol.ecefPosition);
+
+                            printf("\n=======================================================\n");
+                            printf("[PVT ENGINE] POSITION SOLUTION ACHIEVED!\n");
+                            printf("=======================================================\n");
+                            printf(" Latitude: %12.4f° N\n", geo.latitudeDegrees);
+                            printf(" Longitude: %12.4f° W\n", -geo.longitudeDegrees); // Displaying as West
+                            printf(" Altitude: %12.3f meters\n", geo.altitudeMeters);
+                            printf(" GDOP    : %12.3f\n", sol.gdop);
                             printf("=======================================================\n\n");
                         }
                         else

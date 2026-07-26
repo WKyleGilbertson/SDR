@@ -507,6 +507,16 @@ void NavDecoder::decodeSubframe(int subframeID)
 
 double NavDecoder::getExactTransmitTime(double currentCodePhaseChips) const
 {
+    // Use _tow (which is already common across synchronized channels) 
+    // and add the fractional millisecond from the code phase.
+    double fractionalSeconds = currentCodePhaseChips / 1023000.0;
+    
+    // If _tow is valid, use it as the base second
+    return (double)_tow + fractionalSeconds;
+}
+/*
+double NavDecoder::getExactTransmitTime(double currentCodePhaseChips) const
+{
     // 1. Time at the very start of the current subframe
     double startOfSubframe = (double)_tow - 6.0;
 
@@ -518,4 +528,4 @@ double NavDecoder::getExactTransmitTime(double currentCodePhaseChips) const
     double fractionalSeconds = currentCodePhaseChips / 1023000.0;
 
     return startOfSubframe + elapsedSeconds + fractionalSeconds;
-}
+} */

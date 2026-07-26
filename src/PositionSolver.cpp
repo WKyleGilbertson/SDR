@@ -1,6 +1,42 @@
+#define _USE_MATH_DEFINES
 #include "PositionSolver.hpp"
+#include "PVTSolver.hpp" // For Vector3
 #include <cmath>
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 #include <iostream>
+
+
+GeodeticCoordinates PositionSolver::ecefToLLA(const Vector3& ecef) {
+//inline GeodeticCoordinates ecefToLLA(const Vector3& ecef) {
+    // WGS-84 ellipsoid constants
+    constexpr double a = 6378137.0;          // Semi-major axis in meters
+    constexpr double f = 1.0 / 298.257223563;// Flattening
+    constexpr double b = a * (1.0 - f);      // Semi-minor axis
+    constexpr double e2 = f * (2.0 - f);     // First eccentricity squared
+    constexpr double ep2 = (a*a - b*b)/(b*b);// Second eccentricity squared
+
+    double x = ecef.x;
+    double y = ecef.y;
+    double z = ecef.z;
+
+    double p = std::sqrt(x*x + y*y);
+    double theta = std::atan2(z * a, p * b);
+
+    double lon = std::atan2(y, x);
+    double lat = std::atan2(z + ep2 * b * std::sin(theta) * std::sin(theta) * std::sin(theta),
+                            p - e2 * a * std::cos(theta) * std::cos(theta) * std::cos(theta));
+
+    double N = a / std::sqrt(1.0 - e2 * std::sin(lat) * std::sin(lat));
+    double alt = p / std::cos(lat) - N;
+
+    GeodeticCoordinates geo;
+    geo.latitudeDegrees = lat * (180.0 / M_PI);
+    geo.longitudeDegrees = lon * (180.0 / M_PI);
+    geo.altitudeMeters = alt;
+    return geo;
+}
 
 PositionSolution PositionSolver::computePosition(
     const std::vector<Vector3>& satPositions,

@@ -4,6 +4,12 @@
 #include <Eigen/Dense>
 #include "PVTSolver.hpp" // For Vector3
 
+struct GeodeticCoordinates {
+    double latitudeDegrees;
+    double longitudeDegrees;
+    double altitudeMeters;
+};
+
 struct PositionSolution {
     Vector3 ecefPosition;     // User X, Y, Z in meters
     double  clockBiasSeconds; // Receiver clock error
@@ -23,4 +29,6 @@ public:
     static PositionSolution computePosition(
         const std::vector<Vector3>& satPositions,
         const std::vector<double>& pseudoranges);
+
+    static GeodeticCoordinates  ecefToLLA(const Vector3& ecef);
 };
