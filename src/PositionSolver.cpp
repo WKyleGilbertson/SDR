@@ -71,9 +71,9 @@ PositionSolution PositionSolver::computePosition(
             
             deltaRho(i) = pseudoranges[i] - (expectedRange + state(3));
 
-            H(i, 0) = -dx / expectedRange;
-            H(i, 1) = -dy / expectedRange;
-            H(i, 2) = -dz / expectedRange;
+            H(i, 0) = dx / expectedRange;
+            H(i, 1) = dy / expectedRange;
+            H(i, 2) = dz / expectedRange;
             H(i, 3) = 1.0;
 
             // --- BUILD WEIGHT MATRIX (W) ---
