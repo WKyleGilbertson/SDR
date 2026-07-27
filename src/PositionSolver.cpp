@@ -40,60 +40,57 @@ GeodeticCoordinates PositionSolver::ecefToLLA(const Vector3& ecef) {
 
 PositionSolution PositionSolver::computePosition(
     const std::vector<Vector3>& satPositions,
-    const std::vector<double>& pseudoranges)
+    const std::vector<double>& pseudoranges,
+    const std::vector<float>& snrs)
 {
     PositionSolution solution;
     solution.isValid = false;
-    solution.gdop = 99.9; // Default to poor geometry
+    solution.gdop = 99.9;
 
     size_t numSats = satPositions.size();
-    
-    // We strictly need 4 satellites: X, Y, Z, and Time (Clock Bias)
-    if (numSats < 4 || pseudoranges.size() != numSats) {
-        return solution; 
+    if (numSats < 4 || pseudoranges.size() != numSats || snrs.size() != numSats) {
+        return solution;
     }
 
-    // State vector: [X, Y, Z, c*dt]
-    // Start the guess on the surface of the Earth, roughly in North America
-    // (This prevents Jacobian linearization from diverging)
     Eigen::Vector4d state;
-    state << -1280000.0, -4700000.0, 4000000.0, 0.0; // Rough ECEF for Denver, CO  
+    state << -1280000.0, -4700000.0, 4000000.0, 0.0; // Seed
 
-    Eigen::MatrixXd H(numSats, 4);     // Geometry Matrix (Jacobian)
-    Eigen::VectorXd deltaRho(numSats); // Pseudorange residuals (Errors)
+    Eigen::MatrixXd H(numSats, 4);
+    Eigen::VectorXd deltaRho(numSats);
+    Eigen::MatrixXd W = Eigen::MatrixXd::Zero(numSats, numSats); // Weight matrix
 
     int maxIterations = 10;
-    
     for (int iter = 0; iter < maxIterations; ++iter) 
     {
         for (size_t i = 0; i < numSats; ++i) 
         {
-            // Delta from current estimated position to the satellite
             double dx = satPositions[i].x - state(0);
             double dy = satPositions[i].y - state(1);
             double dz = satPositions[i].z - state(2);
-
-            // Expected distance to the satellite from our current guess
             double expectedRange = std::sqrt(dx*dx + dy*dy + dz*dz);
-
-            // Residual = Measured Range - (Expected Range + Receiver Clock Bias)
+            
             deltaRho(i) = pseudoranges[i] - (expectedRange + state(3));
 
-            // Populate the Jacobian Matrix 'H' (Direction Cosines)
             H(i, 0) = -dx / expectedRange;
             H(i, 1) = -dy / expectedRange;
             H(i, 2) = -dz / expectedRange;
-            H(i, 3) = 1.0; // The clock bias affects all satellites equally
+            H(i, 3) = 1.0;
+
+            // --- BUILD WEIGHT MATRIX (W) ---
+            // Convert SNR (dB) to a linear scale weight. 
+            // Higher SNR = higher weight. (e.g., variance scaling or direct linear mapping)
+            // Using a simple power-based or linear multiplier:
+            float snrLinear = std::pow(10.0f, snrs[i] / 10.0f);
+            W(i, i) = snrLinear; 
         }
 
-        // --- THE MAGIC EIGEN MATRIX SOLVER ---
-        // Equation: deltaState = (H^T * H)^-1 * H^T * deltaRho
-        Eigen::Vector4d deltaState = (H.transpose() * H).inverse() * H.transpose() * deltaRho;
+        // --- WEIGHTED LEAST SQUARES MATRIX OPERATION ---
+        // Formula: deltaState = (H^T * W * H)^-1 * H^T * W * deltaRho
+        Eigen::Matrix4d J = H.transpose() * W * H;
+        Eigen::Vector4d deltaState = J.inverse() * H.transpose() * W * deltaRho;
 
-        // Apply the calculated correction to our current guess
         state += deltaState;
 
-        // Convergence Check: If the correction moved us less than 1 millimeter, we have arrived!
         if (deltaState.head<3>().norm() < 1e-3) {
             solution.isValid = true;
             break;
@@ -105,13 +102,9 @@ PositionSolution PositionSolver::computePosition(
         solution.ecefPosition.x = state(0);
         solution.ecefPosition.y = state(1);
         solution.ecefPosition.z = state(2);
-        
-        // Convert the distance bias back into seconds
         solution.clockBiasSeconds = state(3) / PVTSolver::SPEED_OF_LIGHT;
         
-        // Calculate GDOP (Geometric Dilution of Precision)
-        // This tells us how "good" our satellite geometry is. Lower is better.
-        Eigen::Matrix4d covariance = (H.transpose() * H).inverse();
+        Eigen::Matrix4d covariance = (H.transpose() * W * H).inverse();
         solution.gdop = std::sqrt(covariance.trace());
     }
 

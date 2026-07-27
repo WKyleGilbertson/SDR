@@ -319,6 +319,7 @@ int main(int argc, char *argv[])
                 {
                     int prn;
                     double transmitTime;
+                    float snr;
                     Ephemeris eph;
                 };
                 std::vector<ValidChan> validChans;
@@ -371,6 +372,7 @@ int main(int argc, char *argv[])
 
                     std::vector<Vector3> satPositions;
                     std::vector<double> pseudoranges;
+                    std::vector<float>satSnrs;
 
                     // Find max transmit time IN THE CLEAN CLUSTER to set receiver baseline
                     double maxTransmit = -1.0;
@@ -436,6 +438,7 @@ int main(int argc, char *argv[])
 
                             satPositions.push_back(satPos);
                             pseudoranges.push_back(pRange);
+                            satSnrs.push_back(vc.snr);
 
                             printf(" [+] PRN %2d | Transmit: %.6f | X: %11.0f Y: %11.0f Z: %11.0f | PRange: %.1f\n",
                                    vc.prn, t_tx_true, satPos.x, satPos.y, satPos.z, pRange);
@@ -444,7 +447,9 @@ int main(int argc, char *argv[])
 
                     if (satPositions.size() >= 4)
                     {
-                        PositionSolution sol = PositionSolver::computePosition(satPositions, pseudoranges);
+                        PositionSolution sol = 
+                        PositionSolver::computePosition(satPositions,
+                             pseudoranges, satSnrs );
 
                         if (sol.isValid)
                         {

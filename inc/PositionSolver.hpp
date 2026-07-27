@@ -26,9 +26,10 @@ public:
      * @param pseudoranges Measured pseudoranges to those satellites (Meters)
      * @return PositionSolution containing the calculated position and clock bias
      */
-    static PositionSolution computePosition(
+static PositionSolution computePosition(
         const std::vector<Vector3>& satPositions,
-        const std::vector<double>& pseudoranges);
+        const std::vector<double>& pseudoranges,
+        const std::vector<float>& snrs); // <--- Add snrs vector here
 
     static GeodeticCoordinates  ecefToLLA(const Vector3& ecef);
 };
