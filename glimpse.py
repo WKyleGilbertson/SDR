@@ -51,7 +51,7 @@ try:
                     print(f"\r[!] Error: Receiving old packet size (1052). Recompile collector!", end='')
                 continue
             
-            # Unpack the new header
+# Unpack the new header
             pkt_type, fs, unix_t, tick, seq, dev_tag, p_len = struct.unpack(HEADER_FORMAT, data[:HEADER_SIZE])
             
             # New Phase calculation (modulo 16,368 samples)
@@ -60,8 +60,8 @@ try:
             if not aligned:
                 print(f"  [Waiting... Type: {pkt_type} Phase: {current_phase} Fs: {fs/1e6:.1f}M]", end='\r')
                 
-                # Check for Phase 0 alignment
-                if (pkt_type == 1 or pkt_type == 49) and current_phase == 0:
+                # Check for Phase 0 alignment (Added PKT_TYPE 3 support)
+                if (pkt_type == 3 or pkt_type == 1 or pkt_type == 49) and current_phase == 0:
                     aligned = True
                     dev = dev_tag.decode('ascii', errors='ignore').strip('\x00')
                     print(" " * 65, end='\r') 

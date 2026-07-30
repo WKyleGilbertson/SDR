@@ -7,6 +7,9 @@
 #include <string>
 #include <cstdint>
 #include <cstdio>
+
+#define PKT_TYPE_USB_DATA 0x01
+#define PKT_TYPE_BVF_DATA 0x03
 namespace ReceiverConfig
 {
     constexpr int    CA_CHIPS          = 1023;
