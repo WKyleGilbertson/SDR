@@ -1,6 +1,32 @@
 import socket
 import struct
 from datetime import datetime, timezone
+CROCK32_CHARS = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+def crockford_base32_encode_py(data_bytes):
+    buffer = 0
+    bits_left = 0
+    out26 = []
+    for b in data_bytes:
+        buffer = (buffer << 8) | b
+        bits_left += 8
+        while bits_left >= 5:
+            bits_left -= 5
+            out26.append(CROCK32_CHARS[(buffer >> bits_left) & 0x1F])
+    if bits_left > 0:
+        buffer <<= (5 - bits_left)
+        out26.append(CROCK32_CHARS[buffer & 0x1F])
+    return "".join(out26)
+
+def format_b32_product_key(in26):
+    group_sizes = [5, 5, 5, 5, 6]
+    src = 0
+    groups = []
+    for size in group_sizes:
+        if src + size <= len(in26):
+            groups.append(in26[src:src+size])
+            src += size
+    return "-".join(groups)
 
 # --- Updated Configuration for 16.368 MHz / 35-byte Header ---
 # Format: < (LE) B(type) I(fs) I(unix) I(tick) I(seq) 16s(tag) H(len)
@@ -31,8 +57,8 @@ print(f"Hunting for Phase 0 alignment (1ms = {SAMPLES_PER_MS} samples)...")
 print("")
 
 # Table Header
-print(f"{'Sequence':>10} | {'ISO8601 Timestamp':>20} | {'Tick':>12} | {'Phase':>6}")
-print("-" * 10 + "-+-" + "-" * 20 + "-+-" + "-" * 12 + "-+-" + "-" * 6)
+#print(f"{'Sequence':>10} | {'ISO8601 Timestamp':>20} | {'Tick':>12} | {'Phase':>6}")
+#print("-" * 10 + "-+-" + "-" * 20 + "-+-" + "-" * 12 + "-+-" + "-" * 6)
 
 captured_count = 0
 aligned = False
@@ -51,21 +77,33 @@ try:
                     print(f"\r[!] Error: Receiving old packet size (1052). Recompile collector!", end='')
                 continue
             
-# Unpack the new header
+# Unpack the header
             pkt_type, fs, unix_t, tick, seq, dev_tag, p_len = struct.unpack(HEADER_FORMAT, data[:HEADER_SIZE])
             
-            # New Phase calculation (modulo 16,368 samples)
             current_phase = tick % SAMPLES_PER_MS
             
             if not aligned:
                 print(f"  [Waiting... Type: {pkt_type} Phase: {current_phase} Fs: {fs/1e6:.1f}M]", end='\r')
                 
-                # Check for Phase 0 alignment (Added PKT_TYPE 3 support)
                 if (pkt_type == 3 or pkt_type == 1 or pkt_type == 49) and current_phase == 0:
                     aligned = True
-                    dev = dev_tag.decode('ascii', errors='ignore').strip('\x00')
+                    
+                    if pkt_type == 3:
+                        b32_raw = crockford_base32_encode_py(dev_tag)
+                        dev = format_b32_product_key(b32_raw)
+                    else:
+                        dev = dev_tag.decode('ascii', errors='ignore').strip('\x00')
+                        
+                    # 1. Clear the waiting line
                     print(" " * 65, end='\r') 
+                    
+                    # 2. Print the Lock banner FIRST
                     print(f"[*] LOCKED: Phase 0 | Device: {dev} | Rate: {fs/1e6:.3f} MHz")
+                    print("")
+                    
+                    # 3. Print the Table Headers SECOND
+                    print(f"{'Sequence':>10} | {'ISO8601 Timestamp':>20} | {'Tick':>12} | {'Phase':>6}")
+                    print("-" * 10 + "-+-" + "-" * 20 + "-+-" + "-" * 12 + "-+-" + "-" * 6)
                 else:
                     continue
 
