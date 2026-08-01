@@ -92,6 +92,7 @@ struct UnpackEntry {
 // Accessor functions instead of direct array access
 const UnpackEntry* GetLUT_FNHN();
 const UnpackEntry* GetLUT_FNLN();
+const UnpackEntry* GetLUT_BVF();
 
 inline void unpackL1IF_LUT(uint8_t b, const UnpackEntry* lut, ComplexSample& out0, ComplexSample& out1) {
     const UnpackEntry& entry = lut[b];

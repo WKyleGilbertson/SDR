@@ -32,7 +32,8 @@ public:
     void unpack_to_ring(const uint8_t *packed,
                         size_t packed_count,
                         uint32_t sample_tick,
-                        uint32_t unix_time);
+                        uint32_t unix_time,
+                        uint8_t pkt_type);
 
     bool validate_ring_continuity(size_t lookback = 1000);
 

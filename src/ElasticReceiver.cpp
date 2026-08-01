@@ -142,7 +142,8 @@ void ElasticReceiver::ingest_thread()
                     _staging_buffer.data(),
                     _staging_buffer.size(),
                     _staging_header.sample_tick,
-                    hdr->unix_time);
+                    hdr->unix_time,
+                    hdr->pkt_type);
 
                 _staging_buffer.clear();
                 _staging_count = 0;
@@ -181,10 +182,11 @@ void ElasticReceiver::unpack_to_ring(
     const uint8_t *packed,
     size_t packed_count,
     uint32_t sample_tick,
-    uint32_t unix_time)
+    uint32_t unix_time,
+    uint8_t pkt_type)
 {
-    const UnpackEntry *lut =
-        GetLUT_FNHN();
+// Dynamically route BVF vs USB data formats
+    const UnpackEntry *lut = (pkt_type == PKT_TYPE_BVF_DATA) ? GetLUT_BVF() : GetLUT_FNHN();
 
     std::lock_guard<std::mutex>
         lock(_ring_mtx);

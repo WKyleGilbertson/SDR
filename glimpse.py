@@ -33,7 +33,7 @@ def format_b32_product_key(in26):
 HEADER_FORMAT = "<BIIII16sH"
 HEADER_SIZE = 35
 EXPECTED_SIZE = 1058  # 35 (Hdr) + 1023 (Payload)
-CAPTURE_LIMIT = 80
+CAPTURE_LIMIT = 200 
 FILENAME = "cap.raw"
 
 RELAY_IP = "127.0.0.1"

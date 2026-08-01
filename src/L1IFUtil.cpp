@@ -43,6 +43,7 @@ struct LUTContainer
 {
     UnpackEntry fnhn[256];
     UnpackEntry fnln[256];
+    UnpackEntry bvf[256];
 
     LUTContainer()
     {
@@ -59,6 +60,14 @@ struct LUTContainer
             fnln[b].s0.q = map_bits((b >> 2) & 1, (b >> 3) & 1);
             fnln[b].s1.i = map_bits((b >> 4) & 1, (b >> 5) & 1);
             fnln[b].s1.q = map_bits((b >> 6) & 1, (b >> 7) & 1);
+
+            // BVF Population (Right-Shifted FPGA)
+            // Sample 0 (Lower Nibble) | Verilog: {i0_s, i0_m, q0_s, q0_m}
+            bvf[b].s0.q = map_bits((b >> 0) & 1, (b >> 1) & 1); // Bits 0, 1
+            bvf[b].s0.i = map_bits((b >> 2) & 1, (b >> 3) & 1); // Bits 2, 3
+            // Sample 1 (Upper Nibble) | Verilog: {i1_s, i1_m, q1_s, q1_m}
+            bvf[b].s1.q = map_bits((b >> 4) & 1, (b >> 5) & 1); // Bits 4, 5
+            bvf[b].s1.i = map_bits((b >> 6) & 1, (b >> 7) & 1); // Bits 6, 7
         }
     }
 };
@@ -72,6 +81,7 @@ static LUTContainer &GetContainer()
 
 const UnpackEntry *GetLUT_FNHN() { return GetContainer().fnhn; }
 const UnpackEntry *GetLUT_FNLN() { return GetContainer().fnln; }
+const UnpackEntry *GetLUT_BVF() { return GetContainer().bvf; }
 
 void printCorrelatorData(FILE * fp, CorrelatorResult &res)
 {
