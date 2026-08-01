@@ -104,7 +104,7 @@ AcqResult PCSEngine::search(int prn, const std::vector<kiss_fft_cpx> &rawData,
             uint32_t ncoIdx = m_nco.clk();
             // Multiply float sin/cos by 32767 and cast to int16
             m_ncoBuffer[idx].r = static_cast<int16_t>(m_nco.cosine(ncoIdx) * CODE_SCALE);
-            m_ncoBuffer[idx].i = static_cast<int16_t>(-m_nco.sine(ncoIdx) * CODE_SCALE);
+            m_ncoBuffer[idx].i = static_cast<int16_t>(m_nco.sine(ncoIdx) * CODE_SCALE);
         }
 
         // Zero out the padding using the struct members
@@ -243,7 +243,7 @@ void PCSEngine::dumpLocalCorrelation(
     {
         uint32_t ncoIdx = m_nco.clk();
         m_ncoBuffer[idx].r = static_cast<int16_t>(m_nco.cosine(ncoIdx) * CODE_SCALE);
-        m_ncoBuffer[idx].i = static_cast<int16_t>(-m_nco.sine(ncoIdx) * CODE_SCALE);
+        m_ncoBuffer[idx].i = static_cast<int16_t>(m_nco.sine(ncoIdx) * CODE_SCALE);
     }
 
     for (size_t idx = 16368; idx < N; idx++)
